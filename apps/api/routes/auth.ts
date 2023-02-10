@@ -65,10 +65,12 @@ router.post("/login", async (req, res) => {
   const hashRegex = JSON.stringify(getPasswordHash).replace(/[{}":]/g, "");
   const passwordHash = hashRegex.replace(/password/g, "");
   const verifyHash = await argon2.verify(passwordHash, req.body.password);
+  const usernameRegex = JSON.stringify(getUsername).replace(/[{}":]/g, "");
+  const username = usernameRegex.replace(/username/g, "");
   try {
     const token = jwt.sign(
       {
-        username: getUsername,
+        username: username,
         email: req.body.email,
         password: passwordHash,
       },
