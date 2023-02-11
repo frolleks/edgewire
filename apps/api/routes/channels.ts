@@ -19,7 +19,22 @@ router.post("/:id/:id", async (req, res) => {
   try {
     const auth = req.headers.authorization;
     // @ts-ignore
-    const decode = jwt.verify(auth, process.env.JWT_PASS);
+    jwt.verify(auth, process.env.JWT_PASS, async (error) => {
+      if (!error) {
+        const id = uuid();
+        await prisma.message.create({
+          data: {
+            author: req.body.author,
+            id: id,
+            content: req.body.content,
+          },
+        });
+        res.status(201).send({ message: "message posted!", id: id });
+      } else {
+        console.error(error);
+        res.status(401).send({ message: "Invalid token" });
+      }
+    });
     const validate = schema.safeParse(req.body);
     if (!validate.success) {
       res.status(400).send(fromZodError(validate.error));
@@ -27,16 +42,6 @@ router.post("/:id/:id", async (req, res) => {
       res
         .status(401)
         .send({ message: "You must be logged in to make this request." });
-    } else {
-      const id = uuid();
-      await prisma.message.create({
-        data: {
-          author: req.body.author,
-          id: id,
-          content: req.body.content,
-        },
-      });
-      res.status(201).send({ message: "message posted!", id: id });
     }
   } catch (error) {
     console.error(error);
@@ -51,17 +56,24 @@ router.get("/:id/:id", async (req, res) => {
       res
         .status(401)
         .send({ message: "You must be logged in to make this request." });
-    } else {
-      const messages = await prisma.message.findMany({
-        select: {
-          author: true,
-          id: true,
-          content: true,
-          createdAt: true,
-        },
-      });
-      res.status(200).send({ messages: messages });
     }
+    // @ts-ignore
+    jwt.verify(auth, process.env.JWT_PASS, async (error) => {
+      if (!error) {
+        const messages = await prisma.message.findMany({
+          select: {
+            author: true,
+            id: true,
+            content: true,
+            createdAt: true,
+          },
+        });
+        res.status(200).send({ messages: messages });
+      } else {
+        console.error(error);
+        res.status(401).send({ message: "Invalid token" });
+      }
+    });
   } catch (error) {
     console.error(error);
     res.status(500);
