@@ -45,7 +45,7 @@ router.post("/:id/:id", async (req, res) => {
     }
   } catch (error) {
     console.error(error);
-    res.status(500);
+    res.status(500).send({ error: "Internal Server Error" });
   }
 });
 
@@ -76,7 +76,7 @@ router.get("/:id/:id", async (req, res) => {
     });
   } catch (error) {
     console.error(error);
-    res.status(500);
+    res.status(500).send({ error: "Internal Server Error" });
   }
 });
 
