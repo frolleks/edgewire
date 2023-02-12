@@ -4,7 +4,7 @@
   "pipeline": {
     "build": {
       "dependsOn": ["^build"],
-      "env": ["JWT_PASS"],
+      "env": ["JWT_SIGN", "COOKIE_SIGN"],
       "outputs": ["dist/**", ".next/**"]
     },
     "lint": {

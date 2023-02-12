@@ -1,7 +1,6 @@
 {
-  "$schema": "https://json.schemastore.org/nodemon.json",
   "execMap": {
-    "ts": "tsx"
+    "ts": "ts-node"
   },
-  "watch": ["routes/**/*.ts", "index.ts"]
+  "watch": ["index.ts", "routes/**/*", "controllers/**/*"]
 }

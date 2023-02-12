@@ -1,10 +1,9 @@
 {
   "extends": "tsconfig/base.json",
-  "include": ["./routes/**/*", "index.ts"],
+  "include": ["index.ts", "routes/**/*", "controllers/**/*"],
 
   "compilerOptions": {
     "target": "es6",
-    "module": "commonjs",
-    "outDir": "dist"
+    "module": "commonjs"
   }
 }

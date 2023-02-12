@@ -3,5 +3,5 @@ node_modules
 .env
 
 # prisma
-prisma/migrations/*
 !prisma/migrations/*.toml
+prisma/migrations/
