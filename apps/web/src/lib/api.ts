@@ -15,6 +15,8 @@ import type {
 import { apiFetch } from "./http";
 
 export type UserTheme = "system" | "light" | "dark";
+export type PresenceStatus = "online" | "idle" | "dnd" | "offline";
+export type SelfPresenceStatus = PresenceStatus | "invisible";
 
 export type CurrentUserSettings = {
   theme: UserTheme;
@@ -23,6 +25,8 @@ export type CurrentUserSettings = {
   locale: string | null;
   enable_desktop_notifications: boolean;
   notification_sounds: boolean;
+  presence_status: SelfPresenceStatus;
+  show_current_activity: boolean;
   default_guild_notification_level: NotificationLevel;
 };
 
@@ -59,6 +63,12 @@ export type TypingEvent = {
   channel_id: string;
   user_id: string;
   timestamp: number;
+};
+
+export type AllowedMentions = {
+  parse?: Array<"users" | "roles" | "everyone">;
+  users?: string[];
+  roles?: string[];
 };
 
 export type ChannelBadge = ChannelBadgePayload;
@@ -316,21 +326,21 @@ export const api = {
     payload: {
       content?: string;
       attachment_upload_ids?: string[];
-      allowed_mentions?: {
-        parse?: Array<"users" | "roles" | "everyone">;
-        users?: string[];
-        roles?: string[];
-      };
+      allowed_mentions?: AllowedMentions;
     },
   ) =>
     apiFetch<MessagePayload>(`/api/channels/${channelId}/messages`, {
       method: "POST",
       body: JSON.stringify(payload),
     }),
-  editMessage: (channelId: string, messageId: string, content: string) =>
+  editMessage: (
+    channelId: string,
+    messageId: string,
+    body: { content: string; allowed_mentions?: AllowedMentions },
+  ) =>
     apiFetch<MessagePayload>(`/api/channels/${channelId}/messages/${messageId}`, {
       method: "PATCH",
-      body: JSON.stringify({ content }),
+      body: JSON.stringify(body),
     }),
   deleteMessage: (channelId: string, messageId: string) =>
     apiFetch<void>(`/api/channels/${channelId}/messages/${messageId}`, {

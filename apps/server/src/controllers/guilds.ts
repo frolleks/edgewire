@@ -14,6 +14,7 @@ import {
 import { badRequest, forbidden, json, notFound, parseJson, requireAuth } from "../http";
 import { PermissionBits, defaultEveryonePermissions } from "../lib/permissions";
 import { getGuildPermissionContext, hasGuildPermission, listVisibleGuildChannelsForUser } from "../lib/permission-service";
+import { getPresenceStatusForViewer } from "../presence/presence-store";
 import { resolveAvatarUrl } from "../storage/s3";
 import {
   buildGuildCreateEvent,
@@ -389,6 +390,7 @@ export const updateGuildSettings = async (request: BunRequest<"/api/guilds/:guil
 
 const toGuildMemberPayload = (
   guildId: string,
+  viewerId: string,
   member: {
     guildId: string;
     userId: string;
@@ -400,7 +402,9 @@ const toGuildMemberPayload = (
     avatarS3Key: string | null;
   },
   roleIds: string[],
-) => ({
+) => {
+  const presence = getPresenceStatusForViewer(member.userId, viewerId);
+  return {
   guild_id: member.guildId,
   user: {
     id: member.userId,
@@ -411,7 +415,11 @@ const toGuildMemberPayload = (
   joined_at: member.joinedAt.toISOString(),
   roles: [guildId, ...roleIds],
   role: member.role,
-});
+  presence: {
+    status: presence === "invisible" ? "offline" : presence,
+  },
+  };
+};
 
 export const getGuildMember = async (
   request: BunRequest<"/api/guilds/:guildId/members/:userId">,
@@ -461,7 +469,7 @@ export const getGuildMember = async (
     .from(guildMemberRoles)
     .where(and(eq(guildMemberRoles.guildId, guildId), eq(guildMemberRoles.userId, userId)));
 
-  return json(request, toGuildMemberPayload(guildId, firstMember, roleLinks.map(link => link.roleId)));
+  return json(request, toGuildMemberPayload(guildId, me.id, firstMember, roleLinks.map(link => link.roleId)));
 };
 
 export const listGuildMembers = async (request: BunRequest<"/api/guilds/:guildId/members">): Promise<Response> => {
@@ -544,7 +552,12 @@ export const listGuildMembers = async (request: BunRequest<"/api/guilds/:guildId
       joined_at: member.joinedAt.toISOString(),
       roles: [guildId, ...(rolesByUser.get(member.userId) ?? [])],
       nick: null,
-      presence: null,
+      presence: {
+        status: (() => {
+          const presence = getPresenceStatusForViewer(member.userId, me.id);
+          return presence === "invisible" ? "offline" : presence;
+        })(),
+      },
     })),
     next_after: hasMore ? pageMembers[pageMembers.length - 1]?.userId ?? null : null,
   });

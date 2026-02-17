@@ -1,6 +1,6 @@
 import { ChannelType } from "@discord/types";
 import type { BunRequest } from "bun";
-import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, count, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "../db";
 import { channelReads, messageAttachments, messageMentions, messages, uploadSessions } from "../db/schema";
 import { badRequest, empty, forbidden, json, notFound, parseJson, requireAuth } from "../http";
@@ -83,11 +83,6 @@ export const createChannelMessage = async (request: BunRequest<"/api/channels/:c
   const canView = await hasChannelPermission(me.id, channelId, PermissionBits.VIEW_CHANNEL);
   if (!canView) {
     return forbidden(request);
-  }
-
-  const canSend = await hasChannelPermission(me.id, channelId, PermissionBits.SEND_MESSAGES);
-  if (!canSend) {
-    return forbidden(request, "Missing SEND_MESSAGES.");
   }
 
   const access = await canAccessChannel(me.id, channelId);
@@ -341,11 +336,6 @@ export const updateChannelMessage = async (
     return forbidden(request);
   }
 
-  const canSend = await hasChannelPermission(me.id, channelId, PermissionBits.SEND_MESSAGES);
-  if (!canSend) {
-    return forbidden(request, "Missing SEND_MESSAGES.");
-  }
-
   const access = await canAccessChannel(me.id, channelId);
   if (!access) {
     return forbidden(request);
@@ -366,10 +356,19 @@ export const updateChannelMessage = async (
   const body = await parseJson<unknown>(request);
   const parsed = editMessageSchema.safeParse(body);
   if (!parsed.success) {
-    return badRequest(request, "content must be between 1 and 2000 characters.");
+    return badRequest(request, "content must be between 0 and 2000 characters.");
   }
 
   const nextContent = parsed.data.content;
+  const [attachmentCountRow] = await db
+    .select({ value: count() })
+    .from(messageAttachments)
+    .where(eq(messageAttachments.messageId, messageId));
+  const hasAttachments = Number(attachmentCountRow?.value ?? 0) > 0;
+  if (!nextContent.trim() && !hasAttachments) {
+    return badRequest(request, "Message must include content or attachments.");
+  }
+
   const mentionResolution = await resolveMentionsForChannel({
     channel: access.channel,
     authorId: me.id,

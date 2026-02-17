@@ -4,12 +4,14 @@ import type {
   MessagePayload,
   UserSummary,
 } from "@discord/types";
-import { Trash2 } from "lucide-react";
-import { useMemo } from "react";
+import { Pencil, Trash2 } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
 import AttachmentList from "@/components/chat/attachments/attachment-list";
 import MentionToken from "@/components/chat/mention-token";
 import { formatTime, getDisplayInitial } from "@/components/utils/format";
 import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 import { PermissionBits, hasPermission } from "@/lib/permissions";
 
 type MessageItemProps = {
@@ -25,8 +27,14 @@ type MessageItemProps = {
   guildChannels: GuildChannelPayload[];
   activeGuildChannelPermissions: bigint;
   isDeleting: boolean;
+  isEditing: boolean;
+  isEditPending: boolean;
+  editLocked: boolean;
   onOpenProfile: (user: UserSummary) => void;
   onDeleteMessage: (messageId: string) => void;
+  onStartEdit: (messageId: string) => void;
+  onCancelEdit: () => void;
+  onSaveEdit: (messageId: string, content: string) => void;
 };
 
 const MESSAGE_MENTION_TOKEN_REGEX =
@@ -34,6 +42,7 @@ const MESSAGE_MENTION_TOKEN_REGEX =
 const USER_MENTION_TOKEN_REGEX = /^<@!?([^\s>]+)>$/;
 const ROLE_MENTION_TOKEN_REGEX = /^<@&([^\s>]+)>$/;
 const CHANNEL_MENTION_TOKEN_REGEX = /^<#([^\s>]+)>$/;
+const MESSAGE_MAX_LENGTH = 2000;
 
 export function MessageItem({
   message,
@@ -48,12 +57,21 @@ export function MessageItem({
   guildChannels,
   activeGuildChannelPermissions,
   isDeleting,
+  isEditing,
+  isEditPending,
+  editLocked,
   onOpenProfile,
   onDeleteMessage,
+  onStartEdit,
+  onCancelEdit,
+  onSaveEdit,
 }: MessageItemProps) {
+  const [draftContent, setDraftContent] = useState(message.content);
+  const editTextareaRef = useRef<HTMLTextAreaElement>(null);
   const isOwnMessage = Boolean(
     currentUserId && message.author.id === currentUserId,
   );
+  const canStartEditing = isOwnMessage && !isDeleting && !isEditPending && !editLocked;
   const canDeleteMessage =
     currentUserId !== null &&
     (routeMode === "dm"
@@ -63,6 +81,7 @@ export function MessageItem({
           activeGuildChannelPermissions,
           PermissionBits.MANAGE_MESSAGES,
         ));
+  const canShowDeleteAction = canDeleteMessage && !isEditing;
   const mentionsMe = Boolean(
     currentUserId &&
     (message.mentions.some((user) => user.id === currentUserId) ||
@@ -71,6 +90,17 @@ export function MessageItem({
       ) ||
       message.mention_everyone),
   );
+
+  useEffect(() => {
+    if (isEditing) {
+      setDraftContent(message.content);
+      window.requestAnimationFrame(() => {
+        editTextareaRef.current?.focus();
+        const length = editTextareaRef.current?.value.length ?? 0;
+        editTextareaRef.current?.setSelectionRange(length, length);
+      });
+    }
+  }, [isEditing, message.id]);
 
   const mentionUserById = useMemo(
     () => new Map(message.mentions.map((user) => [user.id, user])),
@@ -189,11 +219,22 @@ export function MessageItem({
 
   return (
     <article
+      tabIndex={0}
+      onKeyDown={(event) => {
+        const wantsEditShortcut =
+          event.key === "e" ||
+          event.key === "E" ||
+          (event.key === "Enter" && !event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey);
+        if (!isEditing && canStartEditing && wantsEditShortcut) {
+          event.preventDefault();
+          onStartEdit(message.id);
+        }
+      }}
       className={`group relative flex ${compactMode ? "gap-2" : "gap-3"} ${
         groupedWithPrevious ? "py-px" : compactMode ? "py-1" : "py-2"
       } px-2 transition-colors hover:bg-accent/50 ${
         mentionsMe ? "border-l-2 border-primary/80 bg-accent/30" : ""
-      }`}
+      } focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/60`}
     >
       {groupedWithPrevious ? (
         <div
@@ -201,7 +242,7 @@ export function MessageItem({
           aria-hidden
         >
           {showTimestamps ? (
-            <span className="absolute right-0 top-0 text-[10px] text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+            <span className="absolute right-0 top-0 text-[9px] text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
               {formatTime(message.timestamp, localePreference)}
             </span>
           ) : null}
@@ -242,7 +283,77 @@ export function MessageItem({
             ) : null}
           </div>
         ) : null}
-        {renderedContent ? (
+        {isEditing ? (
+          <div className={groupedWithPrevious ? "" : "mt-1"}>
+            <Textarea
+              ref={editTextareaRef}
+              rows={2}
+              maxLength={MESSAGE_MAX_LENGTH}
+              value={draftContent}
+              onChange={(event) => setDraftContent(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  setDraftContent(message.content);
+                  onCancelEdit();
+                  return;
+                }
+
+                if (event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault();
+                  const trimmed = draftContent.trim();
+                  if (!trimmed && message.attachments.length === 0) {
+                    toast.error("Message must include content or attachments.");
+                    return;
+                  }
+                  if (draftContent.length > MESSAGE_MAX_LENGTH) {
+                    toast.error(`Message must be ${MESSAGE_MAX_LENGTH} characters or fewer.`);
+                    return;
+                  }
+                  onSaveEdit(message.id, draftContent);
+                }
+              }}
+              className="min-h-20 resize-y"
+              disabled={isEditPending}
+            />
+            <div className="mt-2 flex items-center gap-2">
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => {
+                  const trimmed = draftContent.trim();
+                  if (!trimmed && message.attachments.length === 0) {
+                    toast.error("Message must include content or attachments.");
+                    return;
+                  }
+                  if (draftContent.length > MESSAGE_MAX_LENGTH) {
+                    toast.error(`Message must be ${MESSAGE_MAX_LENGTH} characters or fewer.`);
+                    return;
+                  }
+                  onSaveEdit(message.id, draftContent);
+                }}
+                disabled={isEditPending}
+              >
+                Save
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setDraftContent(message.content);
+                  onCancelEdit();
+                }}
+                disabled={isEditPending}
+              >
+                Cancel
+              </Button>
+              <span className="text-[11px] text-muted-foreground">
+                Enter to save, Shift+Enter for newline, Esc to cancel
+              </span>
+            </div>
+          </div>
+        ) : renderedContent ? (
           <p
             className={`whitespace-pre-wrap break-words ${groupedWithPrevious ? "" : "mt-1"} ${compactMode ? "text-xs" : "text-sm"}`}
           >
@@ -251,19 +362,32 @@ export function MessageItem({
         ) : null}
         <AttachmentList attachments={message.attachments} />
 
-        {canDeleteMessage ? (
+        {canStartEditing || canShowDeleteAction ? (
           <div className="pointer-events-none absolute -right-1 top-0 z-10 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
-            <div className="pointer-events-auto rounded-md border bg-card shadow-sm">
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                aria-label="Delete message"
-                disabled={isDeleting}
-                onClick={() => onDeleteMessage(message.id)}
-              >
-                <Trash2 className="size-4" />
-              </Button>
+            <div className="pointer-events-auto flex items-center rounded-md border bg-card shadow-sm">
+              {canStartEditing ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label="Edit message"
+                  onClick={() => onStartEdit(message.id)}
+                >
+                  <Pencil className="size-4" />
+                </Button>
+              ) : null}
+              {canShowDeleteAction ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label="Delete message"
+                  disabled={isDeleting || isEditPending}
+                  onClick={() => onDeleteMessage(message.id)}
+                >
+                  <Trash2 className="size-4" />
+                </Button>
+              ) : null}
             </div>
           </div>
         ) : null}

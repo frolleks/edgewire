@@ -21,10 +21,13 @@ import {
   type DmChannel,
   type Guild,
   type GuildMemberSummary,
+  type PresenceStatus,
+  type SelfPresenceStatus,
   type Role,
   type TypingEvent,
 } from "@/lib/api";
 import { GATEWAY_URL } from "@/lib/env";
+import { type PresenceMap, presenceQueryKeys } from "@/lib/presence";
 import { queryKeys } from "@/lib/query-keys";
 
 type GatewayParams = {
@@ -56,7 +59,7 @@ const insertNewestMessage = (
 
 const updateMessage = (
   current: InfiniteData<MessagePayload[]> | undefined,
-  message: MessagePayload,
+  update: Partial<MessagePayload> & { id: string },
 ): InfiniteData<MessagePayload[]> | undefined => {
   if (!current) {
     return current;
@@ -64,7 +67,20 @@ const updateMessage = (
 
   return {
     ...current,
-    pages: current.pages.map(page => page.map(item => (item.id === message.id ? message : item))),
+    pages: current.pages.map(page =>
+      page.map(item => {
+        if (item.id !== update.id) {
+          return item;
+        }
+        return {
+          ...item,
+          ...update,
+          mentions: update.mentions ?? item.mentions,
+          mention_roles: update.mention_roles ?? item.mention_roles,
+          mention_channels: update.mention_channels ?? item.mention_channels,
+        };
+      }),
+    ),
   };
 };
 
@@ -312,7 +328,7 @@ const upsertGuildBadge = (
   };
 };
 
-export const useGateway = ({ enabled, userId, activeChannelId }: GatewayParams): void => {
+export const useGateway = ({ enabled, userId, activeChannelId }: GatewayParams) => {
   const queryClient = useQueryClient();
   const socketRef = useRef<WebSocket | null>(null);
   const heartbeatIntervalRef = useRef<number | null>(null);
@@ -320,6 +336,7 @@ export const useGateway = ({ enabled, userId, activeChannelId }: GatewayParams):
   const reconnectTimeoutRef = useRef<number | null>(null);
   const lastSequenceRef = useRef<number | null>(null);
   const typingTimeoutsRef = useRef<Map<string, number>>(new Map());
+  const sendPresenceUpdateRef = useRef<(status: SelfPresenceStatus) => void>(() => undefined);
 
   useEffect(() => {
     if (!enabled || !userId) {
@@ -392,6 +409,15 @@ export const useGateway = ({ enabled, userId, activeChannelId }: GatewayParams):
         if (socket.readyState === WebSocket.OPEN) {
           socket.send(JSON.stringify(packet));
         }
+      };
+
+      sendPresenceUpdateRef.current = (status: SelfPresenceStatus): void => {
+        send({
+          op: 3,
+          d: {
+            status,
+          },
+        });
       };
 
       const sendHeartbeat = (): void => {
@@ -601,19 +627,52 @@ export const useGateway = ({ enabled, userId, activeChannelId }: GatewayParams):
             break;
           }
           case "MESSAGE_UPDATE": {
-            const message = packet.d as MessagePayload;
+            const message = packet.d as Partial<MessagePayload> & {
+              id: string;
+              channel_id: string;
+            };
             queryClient.setQueryData<InfiniteData<MessagePayload[]>>(
               queryKeys.messages(message.channel_id),
               old => updateMessage(old, message),
             );
 
-            if (message.guild_id === null) {
+            if (message.guild_id === null || message.guild_id === undefined) {
               queryClient.setQueryData<DmChannel[]>(queryKeys.dmChannels, old =>
                 (old ?? []).map(channel =>
-                  channel.last_message_id === message.id ? { ...channel, last_message: message } : channel,
+                  channel.last_message_id === message.id
+                    ? {
+                        ...channel,
+                        last_message: channel.last_message
+                          ? {
+                              ...channel.last_message,
+                              ...message,
+                            }
+                          : channel.last_message,
+                      }
+                    : channel,
                 ),
               );
             }
+            break;
+          }
+          case "PRESENCE_UPDATE": {
+            const payload = packet.d as {
+              user_id: string;
+              status: PresenceStatus;
+              last_seen_at: string;
+            };
+            queryClient.setQueryData<PresenceMap>(presenceQueryKeys.presences, old => ({
+              ...(old ?? {}),
+              [payload.user_id]: payload.status,
+            }));
+            break;
+          }
+          case "PRESENCE_SELF_UPDATE": {
+            const payload = packet.d as {
+              status: SelfPresenceStatus;
+              last_seen_at: string;
+            };
+            queryClient.setQueryData<SelfPresenceStatus>(presenceQueryKeys.selfPresence, payload.status);
             break;
           }
           case "MESSAGE_DELETE": {
@@ -1084,6 +1143,13 @@ export const useGateway = ({ enabled, userId, activeChannelId }: GatewayParams):
         socketRef.current.close();
       }
       socketRef.current = null;
+      sendPresenceUpdateRef.current = () => undefined;
     };
   }, [activeChannelId, enabled, queryClient, userId]);
+
+  return {
+    sendPresenceUpdate: (status: SelfPresenceStatus): void => {
+      sendPresenceUpdateRef.current(status);
+    },
+  } as const;
 };

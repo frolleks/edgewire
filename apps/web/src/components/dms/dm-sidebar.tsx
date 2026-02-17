@@ -1,5 +1,7 @@
 import type { UserSummary } from "@discord/types";
 import type { DmChannel } from "@/lib/api";
+import type { PresenceMap } from "@/lib/presence";
+import { presenceDotClassName } from "@/lib/presence";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Link } from "react-router-dom";
@@ -9,6 +11,7 @@ type DmSidebarProps = {
   onSearchChange: (value: string) => void;
   usersSearchResults?: UserSummary[];
   dmChannels: DmChannel[];
+  presences: PresenceMap;
   channelBadges: Map<string, { unread_count: number; mention_count: number }>;
   activeChannelId: string | null;
   onCreateDm: (recipientId: string) => void;
@@ -19,6 +22,7 @@ export function DmSidebar({
   onSearchChange,
   usersSearchResults,
   dmChannels,
+  presences,
   channelBadges,
   activeChannelId,
   onCreateDm,
@@ -62,6 +66,7 @@ export function DmSidebar({
         {dmChannels.map((channel) => {
           const recipient = channel.recipients[0];
           const active = activeChannelId === channel.id;
+          const presenceStatus = recipient ? (presences[recipient.id] ?? recipient.presence_status ?? "offline") : "offline";
           const badge = channelBadges.get(channel.id);
           const mentionCount = badge?.mention_count ?? 0;
           const unreadCount = badge?.unread_count ?? (channel.unread ? 1 : 0);
@@ -73,8 +78,11 @@ export function DmSidebar({
               className={`block rounded-md px-3 py-2 transition ${active ? "bg-accent" : "hover:bg-accent"}`}
             >
               <div className="flex items-center justify-between gap-2">
-                <span className="font-medium truncate">
-                  {recipient?.display_name ?? "Unknown"}
+                <span className="flex items-center gap-2 min-w-0">
+                  <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${presenceDotClassName(presenceStatus)}`} />
+                  <span className="font-medium truncate">
+                    {recipient?.display_name ?? "Unknown"}
+                  </span>
                 </span>
                 {mentionCount > 0 ? (
                   <span className="min-w-5 rounded-full bg-destructive px-1.5 py-0.5 text-center text-[10px] font-semibold text-destructive-foreground">

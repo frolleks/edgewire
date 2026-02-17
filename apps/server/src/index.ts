@@ -6,6 +6,15 @@ import { corsPreflight } from "./http";
 import { getUserSummaryById } from "./lib/users";
 import { routes } from "./routes";
 import {
+  persistAndApplyPresencePreference,
+  pruneStalePresenceConnections,
+  registerPresenceConnection,
+  touchPresenceHeartbeat,
+  unregisterPresenceConnection,
+  updatePresenceFromGateway,
+  type SelfPresenceStatus,
+} from "./presence/presence-store";
+import {
   GatewayOp,
   HEARTBEAT_INTERVAL_MS,
   addConnectionToUser,
@@ -21,6 +30,26 @@ import {
 } from "./runtime";
 
 startUploadCleanupTask();
+
+const PRESENCE_STALE_MS = 45_000;
+const PRESENCE_CLEANUP_INTERVAL_MS = 15_000;
+
+setInterval(() => {
+  void pruneStalePresenceConnections(PRESENCE_STALE_MS).then(staleConnectionIds => {
+    for (const connectionId of staleConnectionIds) {
+      const connection = gatewayConnections.get(connectionId);
+      if (!connection) {
+        continue;
+      }
+
+      try {
+        connection.ws.close(4000, "Heartbeat timeout");
+      } catch {
+        // ignored
+      }
+    }
+  });
+}, PRESENCE_CLEANUP_INTERVAL_MS);
 
 const server = Bun.serve<WsData>({
   port: env.PORT,
@@ -109,6 +138,7 @@ const server = Bun.serve<WsData>({
 
       if (payload.op === GatewayOp.HEARTBEAT) {
         connection.lastHeartbeatAt = now();
+        void touchPresenceHeartbeat(connection.id);
         sendPacket(connection, {
           op: GatewayOp.HEARTBEAT_ACK,
           s: null,
@@ -157,6 +187,7 @@ const server = Bun.serve<WsData>({
         connection.lastHeartbeatAt = now();
 
         addConnectionToUser(userId, connection.id);
+        await registerPresenceConnection(connection.id, userId);
         await sendReadyAndBackfillGuilds(connection, user);
         return;
       }
@@ -202,7 +233,39 @@ const server = Bun.serve<WsData>({
         connection.lastHeartbeatAt = now();
 
         addConnectionToUser(userId, connection.id);
+        await registerPresenceConnection(connection.id, userId);
         await sendReadyAndBackfillGuilds(connection, user);
+        return;
+      }
+
+      if (payload.op === 3) {
+        if (!connection.identified || !connection.userId) {
+          sendPacket(connection, {
+            op: GatewayOp.INVALID_SESSION,
+            d: false,
+            s: null,
+            t: null,
+          });
+          return;
+        }
+
+        const status = (payload.d as { status?: SelfPresenceStatus } | undefined)?.status;
+        if (!status || !["online", "idle", "dnd", "invisible"].includes(status)) {
+          sendPacket(connection, {
+            op: GatewayOp.INVALID_SESSION,
+            d: false,
+            s: null,
+            t: null,
+          });
+          return;
+        }
+
+        if (status === "online" || status === "dnd" || status === "invisible") {
+          await persistAndApplyPresencePreference(connection.userId, status);
+          return;
+        }
+
+        await updatePresenceFromGateway(connection.id, status);
         return;
       }
 
@@ -227,6 +290,8 @@ const server = Bun.serve<WsData>({
       if (connection.userId) {
         removeConnectionFromUser(connection.userId, connection.id);
       }
+
+      void unregisterPresenceConnection(connection.id);
 
       gatewayConnections.delete(connection.id);
     },

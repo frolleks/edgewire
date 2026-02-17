@@ -95,7 +95,7 @@ export const createMessageSchema = z.object({
   });
 
 export const editMessageSchema = z.object({
-  content: z.string().trim().min(1).max(MESSAGE_MAX_LENGTH),
+  content: z.string().max(MESSAGE_MAX_LENGTH),
   allowed_mentions: allowedMentionsSchema.optional(),
 });
 

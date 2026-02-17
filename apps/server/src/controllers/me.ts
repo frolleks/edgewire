@@ -14,6 +14,7 @@ import {
   users,
 } from "../db/schema";
 import { badRequest, empty, json, notFound, parseJson, requireAuth } from "../http";
+import { applyPersistedPresencePreference, getPresenceStatusForOthers } from "../presence/presence-store";
 import { getCurrentUserById, getUserSummaryById, isValidUsername, normalizeUsernameForUpdate } from "../lib/users";
 import {
   broadcastUserUpdate,
@@ -45,11 +46,14 @@ type PatchMeSettingsBody = {
   locale?: unknown;
   enable_desktop_notifications?: unknown;
   notification_sounds?: unknown;
+  presence_status?: unknown;
+  show_current_activity?: unknown;
   default_guild_notification_level?: unknown;
 };
 
 const USER_THEME_VALUES = new Set(["system", "light", "dark"]);
 const NOTIFICATION_LEVEL_VALUES = new Set(["ALL_MESSAGES", "ONLY_MENTIONS", "NOTHING"]);
+const PRESENCE_STATUS_VALUES = new Set(["online", "dnd", "invisible"]);
 
 const ensureSupplementaryRows = async (user: { id: string; username: string; display_name: string; avatar_url: string | null }) => {
   await db
@@ -331,6 +335,20 @@ export const patchMeSettings = async (request: Request): Promise<Response> => {
     updates.notificationSounds = body.notification_sounds;
   }
 
+  if (body.presence_status !== undefined) {
+    if (typeof body.presence_status !== "string" || !PRESENCE_STATUS_VALUES.has(body.presence_status)) {
+      return badRequest(request, "presence_status must be one of: online, dnd, invisible.");
+    }
+    updates.presenceStatus = body.presence_status;
+  }
+
+  if (body.show_current_activity !== undefined) {
+    if (typeof body.show_current_activity !== "boolean") {
+      return badRequest(request, "show_current_activity must be a boolean.");
+    }
+    updates.showCurrentActivity = body.show_current_activity;
+  }
+
   if (body.default_guild_notification_level !== undefined) {
     if (
       typeof body.default_guild_notification_level !== "string" ||
@@ -358,6 +376,10 @@ export const patchMeSettings = async (request: Request): Promise<Response> => {
     return notFound(request);
   }
 
+  if (updates.presenceStatus) {
+    await applyPersistedPresencePreference(me.id, updates.presenceStatus);
+  }
+
   emitUserSettingsUpdate(me.id, current.settings);
   return json(request, current.settings);
 };
@@ -369,7 +391,23 @@ export const listMyChannels = async (request: Request): Promise<Response> => {
   }
 
   const dmChannels = await listDmChannelsForUser(authResult.user.id);
-  return json(request, dmChannels);
+  const payload = dmChannels.map(channel => {
+    const recipient = channel.recipients[0];
+    if (!recipient) {
+      return channel;
+    }
+
+    return {
+      ...channel,
+      recipients: [
+        {
+          ...recipient,
+          presence_status: getPresenceStatusForOthers(recipient.id),
+        },
+      ],
+    };
+  });
+  return json(request, payload);
 };
 
 export const createMyChannel = async (request: Request): Promise<Response> => {
@@ -430,7 +468,12 @@ export const createMyChannel = async (request: Request): Promise<Response> => {
       name: null,
       topic: null,
       position: 0,
-      recipients: [toSummary(recipient)],
+      recipients: [
+        {
+          ...toSummary(recipient),
+          presence_status: getPresenceStatusForOthers(recipient.id),
+        },
+      ],
       last_message_id: null,
     });
 
@@ -442,7 +485,12 @@ export const createMyChannel = async (request: Request): Promise<Response> => {
       name: null,
       topic: null,
       position: 0,
-      recipients: [toSummary(me)],
+      recipients: [
+        {
+          ...toSummary(me),
+          presence_status: getPresenceStatusForOthers(me.id),
+        },
+      ],
       last_message_id: null,
     });
   }
@@ -457,7 +505,21 @@ export const createMyChannel = async (request: Request): Promise<Response> => {
     return badRequest(request, "Failed to create DM channel.");
   }
 
-  return json(request, payload);
+  const channelRecipient = payload.recipients[0];
+  return json(
+    request,
+    channelRecipient
+      ? {
+          ...payload,
+          recipients: [
+            {
+              ...channelRecipient,
+              presence_status: getPresenceStatusForOthers(channelRecipient.id),
+            },
+          ],
+        }
+      : payload,
+  );
 };
 
 export const listMyGuilds = async (request: Request): Promise<Response> => {

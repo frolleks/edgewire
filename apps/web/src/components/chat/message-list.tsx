@@ -18,8 +18,13 @@ type MessageListProps = {
   canLoadOlder: boolean;
   isLoadingOlder: boolean;
   deletingMessageIds: string[];
+  editingMessageId: string | null;
+  editingInFlightMessageId: string | null;
   onOpenProfile: (user: UserSummary) => void;
   onDeleteMessage: (messageId: string) => void;
+  onStartEdit: (messageId: string) => void;
+  onCancelEdit: () => void;
+  onSaveEdit: (messageId: string, content: string) => void;
   containerRef: RefObject<HTMLDivElement | null>;
   bottomRef: RefObject<HTMLDivElement | null>;
 };
@@ -58,8 +63,13 @@ export function MessageList({
   canLoadOlder,
   isLoadingOlder,
   deletingMessageIds,
+  editingMessageId,
+  editingInFlightMessageId,
   onOpenProfile,
   onDeleteMessage,
+  onStartEdit,
+  onCancelEdit,
+  onSaveEdit,
   containerRef,
   bottomRef,
 }: MessageListProps) {
@@ -102,8 +112,17 @@ export function MessageList({
                   guildChannels={guildChannels}
                   activeGuildChannelPermissions={activeGuildChannelPermissions}
                   isDeleting={deletingMessageIds.includes(message.id)}
+                  isEditing={editingMessageId === message.id}
+                  isEditPending={editingInFlightMessageId === message.id}
+                  editLocked={
+                    (Boolean(editingMessageId) && editingMessageId !== message.id) ||
+                    (Boolean(editingInFlightMessageId) && editingInFlightMessageId !== message.id)
+                  }
                   onOpenProfile={onOpenProfile}
                   onDeleteMessage={onDeleteMessage}
+                  onStartEdit={onStartEdit}
+                  onCancelEdit={onCancelEdit}
+                  onSaveEdit={onSaveEdit}
                 />
               </div>
             );

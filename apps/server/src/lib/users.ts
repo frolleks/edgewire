@@ -27,6 +27,7 @@ export interface UserSummary {
 
 export type UserTheme = "system" | "light" | "dark";
 export type NotificationLevel = "ALL_MESSAGES" | "ONLY_MENTIONS" | "NOTHING";
+export type PresencePreference = "online" | "idle" | "dnd" | "invisible";
 
 export interface UserSettingsPayload {
   theme: UserTheme;
@@ -35,6 +36,8 @@ export interface UserSettingsPayload {
   locale: string | null;
   enable_desktop_notifications: boolean;
   notification_sounds: boolean;
+  presence_status: PresencePreference;
+  show_current_activity: boolean;
   default_guild_notification_level: NotificationLevel;
 }
 
@@ -54,6 +57,8 @@ const DEFAULT_SETTINGS: UserSettingsPayload = {
   locale: null,
   enable_desktop_notifications: false,
   notification_sounds: true,
+  presence_status: "online",
+  show_current_activity: false,
   default_guild_notification_level: "ONLY_MENTIONS",
 };
 
@@ -201,6 +206,8 @@ const buildMergedUserPayload = (row: {
   settingsLocale: string | null;
   settingsEnableDesktopNotifications: boolean | null;
   settingsNotificationSounds: boolean | null;
+  settingsPresenceStatus: PresencePreference | null;
+  settingsShowCurrentActivity: boolean | null;
   settingsDefaultGuildNotificationLevel: NotificationLevel | null;
 }): CurrentUserPayload => {
   const summary = toSummaryFromSource({
@@ -231,6 +238,8 @@ const buildMergedUserPayload = (row: {
       enable_desktop_notifications:
         row.settingsEnableDesktopNotifications ?? DEFAULT_SETTINGS.enable_desktop_notifications,
       notification_sounds: row.settingsNotificationSounds ?? DEFAULT_SETTINGS.notification_sounds,
+      presence_status: row.settingsPresenceStatus ?? DEFAULT_SETTINGS.presence_status,
+      show_current_activity: row.settingsShowCurrentActivity ?? DEFAULT_SETTINGS.show_current_activity,
       default_guild_notification_level:
         row.settingsDefaultGuildNotificationLevel ?? DEFAULT_SETTINGS.default_guild_notification_level,
     },
@@ -288,6 +297,8 @@ export const getCurrentUserById = async (userId: string): Promise<CurrentUserPay
       settingsLocale: userSettings.locale,
       settingsEnableDesktopNotifications: userSettings.enableDesktopNotifications,
       settingsNotificationSounds: userSettings.notificationSounds,
+      settingsPresenceStatus: userSettings.presenceStatus,
+      settingsShowCurrentActivity: userSettings.showCurrentActivity,
       settingsDefaultGuildNotificationLevel: userSettings.defaultGuildNotificationLevel,
     })
     .from(users)

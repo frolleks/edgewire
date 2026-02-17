@@ -28,6 +28,7 @@ export const users = pgTable(
 
 export const userThemeEnum = pgEnum("user_theme", ["system", "light", "dark"]);
 export const notificationLevelEnum = pgEnum("notification_level", ["ALL_MESSAGES", "ONLY_MENTIONS", "NOTHING"]);
+export const presenceStatusEnum = pgEnum("presence_status", ["online", "idle", "dnd", "invisible"]);
 
 export const userProfiles = pgTable(
   "user_profiles",
@@ -62,6 +63,8 @@ export const userSettings = pgTable(
     locale: text("locale"),
     enableDesktopNotifications: boolean("enable_desktop_notifications").notNull().default(false),
     notificationSounds: boolean("notification_sounds").notNull().default(true),
+    presenceStatus: presenceStatusEnum("presence_status").notNull().default("online"),
+    showCurrentActivity: boolean("show_current_activity").notNull().default(false),
     defaultGuildNotificationLevel: notificationLevelEnum("default_guild_notification_level")
       .notNull()
       .default("ONLY_MENTIONS"),

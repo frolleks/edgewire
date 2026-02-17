@@ -54,6 +54,7 @@ import {
   type DmChannel,
   type Guild,
   type Invite,
+  type SelfPresenceStatus,
   type Role,
   type TypingEvent,
 } from "@/lib/api";
@@ -65,6 +66,11 @@ import {
   parsePermissions,
 } from "@/lib/permissions";
 import { queryKeys } from "@/lib/query-keys";
+import {
+  type PresenceMap,
+  presenceDotClassName,
+  presenceQueryKeys,
+} from "@/lib/presence";
 import {
   completeUpload,
   initAttachmentUpload,
@@ -92,6 +98,36 @@ const removeMessageFromInfinite = (
   return {
     ...current,
     pages: current.pages.map((page) => page.filter((item) => item.id !== messageId)),
+  };
+};
+
+const patchMessageInInfinite = (
+  current: InfiniteData<MessagePayload[]> | undefined,
+  messageId: string,
+  updater: (message: MessagePayload) => MessagePayload,
+): InfiniteData<MessagePayload[]> | undefined => {
+  if (!current) {
+    return current;
+  }
+
+  let changed = false;
+  const pages = current.pages.map((page) =>
+    page.map((message) => {
+      if (message.id !== messageId) {
+        return message;
+      }
+      changed = true;
+      return updater(message);
+    }),
+  );
+
+  if (!changed) {
+    return current;
+  }
+
+  return {
+    ...current,
+    pages,
   };
 };
 
@@ -129,11 +165,16 @@ export function ChatApp() {
   >([]);
   const [isSendingMessage, setIsSendingMessage] = useState(false);
   const [deletingMessageIds, setDeletingMessageIds] = useState<string[]>([]);
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+  const [editingInFlightMessageId, setEditingInFlightMessageId] = useState<string | null>(null);
   const [mobileMembersOpen, setMobileMembersOpen] = useState(false);
+  const [presencePickerOpen, setPresencePickerOpen] = useState(false);
 
   const typingThrottleRef = useRef(0);
   const messageListContainerRef = useRef<HTMLDivElement>(null);
   const listBottomRef = useRef<HTMLDivElement>(null);
+  const presencePickerRef = useRef<HTMLDivElement>(null);
+  const lastPresenceActivityAtRef = useRef(Date.now());
 
   const meQuery = useQuery({
     queryKey: queryKeys.me,
@@ -279,11 +320,29 @@ export function ChatApp() {
       activeGuild.owner_id !== currentUserId,
   );
 
-  useGateway({
+  const { sendPresenceUpdate } = useGateway({
     enabled: Boolean(sessionUser?.id),
     userId: sessionUser?.id ?? null,
     activeChannelId: activeMessageChannelId,
   });
+
+  const selfPresenceQuery = useQuery({
+    queryKey: presenceQueryKeys.selfPresence,
+    queryFn: async () => "online" as SelfPresenceStatus,
+    enabled: false,
+    initialData: "online" as SelfPresenceStatus,
+  });
+
+  const presencesQuery = useQuery({
+    queryKey: presenceQueryKeys.presences,
+    queryFn: async () => ({}) as PresenceMap,
+    enabled: false,
+    initialData: {} as PresenceMap,
+  });
+
+  const me = meQuery.data as CurrentUser | undefined;
+  const selfPresence = selfPresenceQuery.data ?? "online";
+  const presences = presencesQuery.data ?? {};
 
   const messagesQuery = useInfiniteQuery({
     queryKey: queryKeys.messages(activeMessageChannelId ?? "none"),
@@ -631,6 +690,84 @@ export function ChatApp() {
     },
   });
 
+  const editMessageMutation = useMutation({
+    mutationFn: (payload: {
+      channelId: string;
+      messageId: string;
+      content: string;
+    }) =>
+      api.editMessage(payload.channelId, payload.messageId, {
+        content: payload.content,
+      }),
+    onMutate: async ({ channelId, messageId, content }) => {
+      setEditingInFlightMessageId(messageId);
+
+      await queryClient.cancelQueries({
+        queryKey: queryKeys.messages(channelId),
+      });
+
+      const previousMessages = queryClient.getQueryData<InfiniteData<MessagePayload[]>>(
+        queryKeys.messages(channelId),
+      );
+
+      const optimisticEditedTimestamp = new Date().toISOString();
+      queryClient.setQueryData<InfiniteData<MessagePayload[]>>(
+        queryKeys.messages(channelId),
+        (old) =>
+          patchMessageInInfinite(old, messageId, (message) => ({
+            ...message,
+            content,
+            edited_timestamp: optimisticEditedTimestamp,
+          })),
+      );
+
+      return {
+        channelId,
+        messageId,
+        previousMessages,
+      };
+    },
+    onError: (error, _variables, context) => {
+      if (context?.previousMessages !== undefined) {
+        queryClient.setQueryData<InfiniteData<MessagePayload[]>>(
+          queryKeys.messages(context.channelId),
+          context.previousMessages,
+        );
+      }
+
+      setEditingMessageId(null);
+      toast.error(
+        error instanceof Error ? error.message : "Could not edit message.",
+      );
+    },
+    onSuccess: (updatedMessage, { channelId, messageId }) => {
+      queryClient.setQueryData<InfiniteData<MessagePayload[]>>(
+        queryKeys.messages(channelId),
+        (old) => patchMessageInInfinite(old, messageId, () => updatedMessage),
+      );
+
+      if (updatedMessage.guild_id === null) {
+        queryClient.setQueryData<DmChannel[]>(queryKeys.dmChannels, (old) =>
+          (old ?? []).map((channel) =>
+            channel.id === channelId && channel.last_message_id === messageId
+              ? {
+                  ...channel,
+                  last_message: updatedMessage,
+                }
+              : channel,
+          ),
+        );
+      }
+
+      setEditingMessageId(null);
+    },
+    onSettled: (_data, _error, variables) => {
+      setEditingInFlightMessageId((current) =>
+        current === variables.messageId ? null : current,
+      );
+    },
+  });
+
   useEffect(() => {
     if (location.pathname === "/app") {
       navigate("/app/channels/@me", { replace: true });
@@ -659,6 +796,107 @@ export function ChatApp() {
   useEffect(() => {
     setMobileMembersOpen(false);
   }, [route.channelId, route.guildId, route.mode]);
+
+  useEffect(() => {
+    setPresencePickerOpen(false);
+  }, [route.channelId, route.guildId, route.mode]);
+
+  useEffect(() => {
+    const persisted = me?.settings?.presence_status;
+    if (!persisted) {
+      return;
+    }
+
+    queryClient.setQueryData<SelfPresenceStatus>(
+      presenceQueryKeys.selfPresence,
+      (current) => {
+        if (!current || current === "offline") {
+          return persisted;
+        }
+
+        if (current === "idle" && persisted === "online") {
+          return current;
+        }
+
+        return persisted;
+      },
+    );
+  }, [me?.settings?.presence_status, queryClient]);
+
+  useEffect(() => {
+    const onPointerDown = (event: MouseEvent): void => {
+      if (!presencePickerOpen || !presencePickerRef.current) {
+        return;
+      }
+
+      if (event.target instanceof Node && !presencePickerRef.current.contains(event.target)) {
+        setPresencePickerOpen(false);
+      }
+    };
+
+    const onEscape = (event: KeyboardEvent): void => {
+      if (event.key === "Escape") {
+        setPresencePickerOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("keydown", onEscape);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("keydown", onEscape);
+    };
+  }, [presencePickerOpen]);
+
+  useEffect(() => {
+    const markActive = (): void => {
+      lastPresenceActivityAtRef.current = Date.now();
+      const current = queryClient.getQueryData<SelfPresenceStatus>(presenceQueryKeys.selfPresence) ?? "online";
+      if (current === "idle") {
+        queryClient.setQueryData<SelfPresenceStatus>(presenceQueryKeys.selfPresence, "online");
+        sendPresenceUpdate("online");
+      }
+    };
+
+    const intervalId = window.setInterval(() => {
+      const current = queryClient.getQueryData<SelfPresenceStatus>(presenceQueryKeys.selfPresence) ?? "online";
+      if (current !== "online") {
+        return;
+      }
+
+      if (Date.now() - lastPresenceActivityAtRef.current >= 5 * 60 * 1000) {
+        queryClient.setQueryData<SelfPresenceStatus>(presenceQueryKeys.selfPresence, "idle");
+        sendPresenceUpdate("idle");
+      }
+    }, 30_000);
+
+    window.addEventListener("mousemove", markActive, { passive: true });
+    window.addEventListener("keydown", markActive);
+    window.addEventListener("scroll", markActive, { passive: true });
+
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener("mousemove", markActive);
+      window.removeEventListener("keydown", markActive);
+      window.removeEventListener("scroll", markActive);
+    };
+  }, [queryClient, sendPresenceUpdate]);
+
+  const setManualPresence = (nextStatus: Extract<SelfPresenceStatus, "online" | "dnd" | "invisible">): void => {
+    const previousStatus = queryClient.getQueryData<SelfPresenceStatus>(presenceQueryKeys.selfPresence) ?? "online";
+    queryClient.setQueryData<SelfPresenceStatus>(presenceQueryKeys.selfPresence, nextStatus);
+    sendPresenceUpdate(nextStatus);
+    setPresencePickerOpen(false);
+
+    api
+      .updateSettings({
+        presence_status: nextStatus,
+      })
+      .catch((error) => {
+        queryClient.setQueryData<SelfPresenceStatus>(presenceQueryKeys.selfPresence, previousStatus);
+        toast.error(error instanceof Error ? error.message : "Could not update status.");
+      });
+  };
 
   useEffect(() => {
     if (
@@ -802,6 +1040,11 @@ export function ChatApp() {
       });
     });
     return () => cancelAnimationFrame(raf);
+  }, [activeMessageChannelId]);
+
+  useEffect(() => {
+    setEditingMessageId(null);
+    setEditingInFlightMessageId(null);
   }, [activeMessageChannelId]);
 
   useEffect(() => {
@@ -1231,7 +1474,6 @@ export function ChatApp() {
     });
   };
 
-  const me = meQuery.data as CurrentUser | undefined;
   const compactMode = me?.settings?.compact_mode ?? false;
   const showTimestamps = me?.settings?.show_timestamps ?? true;
   const localePreference = me?.settings?.locale ?? undefined;
@@ -1261,6 +1503,7 @@ export function ChatApp() {
               onSearchChange={setSearch}
               usersSearchResults={usersSearchQuery.data}
               dmChannels={dmChannels}
+              presences={presences}
               channelBadges={channelBadgeById}
               activeChannelId={route.channelId}
               onCreateDm={(recipientId) => createDmMutation.mutate(recipientId)}
@@ -1314,25 +1557,55 @@ export function ChatApp() {
           )}
 
           <div className="border-t px-3 py-3 flex items-center justify-between gap-2">
-            <div className="min-w-0 flex items-center gap-2">
-              <div className="h-8 w-8 shrink-0 overflow-hidden rounded-full bg-muted grid place-items-center text-xs font-semibold uppercase">
-                {me?.avatar_url ? (
-                  <img
-                    src={me.avatar_url}
-                    alt={`${me.display_name} avatar`}
-                    className="h-full w-full object-cover"
-                  />
-                ) : (
-                  getDisplayInitial(
-                    me?.display_name ?? sessionUser?.name ?? "You",
-                  )
-                )}
+            <div className="min-w-0 flex items-center gap-2" ref={presencePickerRef}>
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setPresencePickerOpen((open) => !open)}
+                  className="h-8 w-8 shrink-0 overflow-hidden rounded-full bg-muted grid place-items-center text-xs font-semibold uppercase"
+                  aria-label="Set status"
+                >
+                  {me?.avatar_url ? (
+                    <img
+                      src={me.avatar_url}
+                      alt={`${me.display_name} avatar`}
+                      className="h-full w-full object-cover"
+                    />
+                  ) : (
+                    getDisplayInitial(
+                      me?.display_name ?? sessionUser?.name ?? "You",
+                    )
+                  )}
+                </button>
+                <span
+                  className={`absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-card ${presenceDotClassName(selfPresence)}`}
+                />
+
+                {presencePickerOpen ? (
+                  <div className="absolute bottom-full left-0 z-20 mb-2 w-44 rounded-md border bg-popover p-1 shadow-md">
+                    {[
+                      { label: "Online", value: "online" as const },
+                      { label: "Do Not Disturb", value: "dnd" as const },
+                      { label: "Invisible", value: "invisible" as const },
+                    ].map((option) => (
+                      <button
+                        key={option.value}
+                        type="button"
+                        className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent"
+                        onClick={() => setManualPresence(option.value)}
+                      >
+                        <span className={`h-2.5 w-2.5 rounded-full ${presenceDotClassName(option.value)}`} />
+                        <span>{option.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
               </div>
               <div className="min-w-0">
                 <p className="text-sm font-semibold truncate">
                   {me?.display_name ?? sessionUser?.name ?? "You"}
                 </p>
-                <p className="text-xs truncate">@{me?.username ?? "loading"}</p>
+                <p className="text-xs truncate">@{me?.username ?? "loading"} · {selfPresence}</p>
               </div>
             </div>
             <div className="flex items-center gap-1">
@@ -1377,6 +1650,8 @@ export function ChatApp() {
                 canLoadOlder={Boolean(messagesQuery.hasNextPage)}
                 isLoadingOlder={messagesQuery.isFetchingNextPage}
                 deletingMessageIds={deletingMessageIds}
+                editingMessageId={editingMessageId}
+                editingInFlightMessageId={editingInFlightMessageId}
                 onOpenProfile={openProfile}
                 onDeleteMessage={(messageId) => {
                   if (!activeMessageChannelId || deletingMessageIds.includes(messageId)) {
@@ -1386,6 +1661,26 @@ export function ChatApp() {
                   deleteMessageMutation.mutate({
                     channelId: activeMessageChannelId,
                     messageId,
+                  });
+                }}
+                onStartEdit={(messageId) => {
+                  if (editingInFlightMessageId) {
+                    return;
+                  }
+                  setEditingMessageId(messageId);
+                }}
+                onCancelEdit={() => {
+                  setEditingMessageId(null);
+                }}
+                onSaveEdit={(messageId, content) => {
+                  if (!activeMessageChannelId) {
+                    return;
+                  }
+
+                  editMessageMutation.mutate({
+                    channelId: activeMessageChannelId,
+                    messageId,
+                    content,
                   });
                 }}
                 containerRef={messageListContainerRef}
@@ -1434,6 +1729,7 @@ export function ChatApp() {
             <MemberList
               guildId={route.guildId}
               currentUserId={me?.id ?? sessionUser?.id ?? ""}
+              presences={presences}
               onOpenProfile={openProfile}
               onStartDm={(userId) => createDmMutation.mutate(userId)}
               typingUserIds={typingUserIds}
@@ -1465,6 +1761,7 @@ export function ChatApp() {
               <MemberList
                 guildId={route.guildId}
                 currentUserId={me?.id ?? sessionUser?.id ?? ""}
+                presences={presences}
                 onOpenProfile={(user) => {
                   setMobileMembersOpen(false);
                   openProfile(user);
@@ -1483,6 +1780,7 @@ export function ChatApp() {
       <ProfileDialog
         state={profileDialog}
         onClose={() => setProfileDialog(null)}
+        presenceStatus={profileDialog ? (presences[profileDialog.user.id] ?? "offline") : "offline"}
         roles={profileRoles}
         joinedAt={profileMemberQuery.data?.joined_at}
         isLoadingRoles={profileMemberQuery.isPending || profileRolesQuery.isPending}

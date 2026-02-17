@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { api, type GuildMemberSummary } from "@/lib/api";
+import type { PresenceMap } from "@/lib/presence";
 import { queryKeys } from "@/lib/query-keys";
 import MemberListSkeleton from "./member-list-skeleton";
 import MemberRow from "./member-row";
@@ -19,6 +20,7 @@ import {
 type MemberListProps = {
   guildId: string;
   currentUserId: string;
+  presences: PresenceMap;
   onOpenProfile: (user: UserSummary) => void;
   onStartDm: (userId: string) => void | Promise<void>;
   typingUserIds?: Iterable<string>;
@@ -41,6 +43,7 @@ const STATUS_LABELS: Record<MemberStatus, string> = {
 export function MemberList({
   guildId,
   currentUserId,
+  presences,
   onOpenProfile,
   onStartDm,
   typingUserIds,
@@ -123,7 +126,7 @@ export function MemberList({
     };
 
     for (const member of sortMembers(members, roleIndex)) {
-      let status = getMemberStatus(member);
+      let status = presences[member.user.id] ?? getMemberStatus(member);
       if (status === "offline" && typingSet.has(member.user.id)) {
         status = "online";
       }
@@ -136,7 +139,7 @@ export function MemberList({
     }
 
     return grouped;
-  }, [members, roleIndex, typingSet]);
+  }, [members, presences, roleIndex, typingSet]);
 
   const loadedCount = useMemo(
     () =>

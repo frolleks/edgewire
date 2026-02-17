@@ -11,6 +11,7 @@ export interface UserSummary {
   username: string;
   display_name: string;
   avatar_url: string | null;
+  presence_status?: "online" | "idle" | "dnd" | "offline";
 }
 
 export interface ChannelPermissionOverwrite {

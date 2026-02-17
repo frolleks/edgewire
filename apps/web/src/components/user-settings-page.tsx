@@ -80,6 +80,8 @@ const APPEARANCE_SCHEMA = z.object({
   locale: z.string().max(32, "Locale must be at most 32 characters."),
   enable_desktop_notifications: z.boolean(),
   notification_sounds: z.boolean(),
+  presence_status: z.enum(["online", "idle", "dnd", "invisible"]),
+  show_current_activity: z.boolean(),
   default_guild_notification_level: z.enum(["ALL_MESSAGES", "ONLY_MENTIONS", "NOTHING"]),
 });
 
@@ -240,6 +242,8 @@ export default function UserSettingsPage() {
     locale: "",
     enable_desktop_notifications: false,
     notification_sounds: true,
+    presence_status: "online",
+    show_current_activity: false,
     default_guild_notification_level: "ONLY_MENTIONS",
   });
   const [appearanceErrors, setAppearanceErrors] = useState<Record<string, string>>({});
@@ -284,6 +288,8 @@ export default function UserSettingsPage() {
       locale: me.settings.locale ?? "",
       enable_desktop_notifications: me.settings.enable_desktop_notifications,
       notification_sounds: me.settings.notification_sounds,
+      presence_status: me.settings.presence_status,
+      show_current_activity: me.settings.show_current_activity,
       default_guild_notification_level: me.settings.default_guild_notification_level,
     });
   }, [me]);
@@ -980,6 +986,8 @@ export default function UserSettingsPage() {
               locale: parsed.data.locale.trim() || null,
               enable_desktop_notifications: parsed.data.enable_desktop_notifications,
               notification_sounds: parsed.data.notification_sounds,
+              presence_status: parsed.data.presence_status,
+              show_current_activity: parsed.data.show_current_activity,
               default_guild_notification_level: parsed.data.default_guild_notification_level,
             });
           }}
