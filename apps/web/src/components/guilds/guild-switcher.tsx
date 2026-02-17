@@ -26,19 +26,19 @@ export function GuildSwitcher({ route, guilds, guildBadges, onCreateGuild }: Gui
 
       <div className="h-px w-8 bg-border" />
 
-      <div className="flex-1 w-full px-2 space-y-2 overflow-y-auto">
+      <div className="flex-1 w-full space-y-2 overflow-y-auto px-2">
         {guilds.map((guild) => {
           const active = route.mode === "guild" && route.guildId === guild.id;
           const badge = guildBadges.get(guild.id);
           const mentionCount = badge?.mention_count ?? 0;
           const unreadCount = badge?.unread_count ?? 0;
           return (
-            <div key={guild.id} className="relative">
+            <div key={guild.id} className="relative mx-auto w-fit">
               <Button
                 asChild
                 size="icon"
                 variant={active ? "secondary" : "ghost"}
-                className="w-full rounded-xl"
+                className="mx-auto rounded-full"
               >
                 <Link to={`/app/channels/${guild.id}`} aria-label={guild.name}>
                   {guild.name.slice(0, 1).toUpperCase()}
