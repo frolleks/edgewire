@@ -1,6 +1,23 @@
 import { ChannelType, type GuildChannelPayload } from "@discord/types";
+import {
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  closestCenter,
+  type DragEndEvent,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  arrayMove,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { X } from "lucide-react";
+import { GripVertical, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { api, type Guild, type Role } from "@/lib/api";
@@ -84,6 +101,78 @@ const dedupeById = <T extends { id: string }>(items: T[]): T[] => {
   }
 
   return next;
+};
+
+const applyRoleReorder = (
+  roles: Role[],
+  payload: Array<{ id: string; position: number }>,
+): Role[] => {
+  const positionById = new Map(payload.map((item) => [item.id, item.position]));
+
+  return roles
+    .map((role) => {
+      const nextPosition = positionById.get(role.id);
+      if (nextPosition === undefined) {
+        return role;
+      }
+      return {
+        ...role,
+        position: nextPosition,
+      };
+    })
+    .sort(roleSortDesc);
+};
+
+const SortableRoleRow = ({
+  role,
+  selected,
+  disabled,
+  onSelect,
+}: {
+  role: Role;
+  selected: boolean;
+  disabled: boolean;
+  onSelect: () => void;
+}) => {
+  const sortable = useSortable({ id: role.id, disabled });
+  const style = {
+    transform: CSS.Transform.toString(sortable.transform),
+    transition: sortable.transition,
+  };
+
+  return (
+    <div
+      ref={sortable.setNodeRef}
+      style={style}
+      className={`rounded border p-2 ${
+        selected ? "bg-accent" : ""
+      } ${sortable.isDragging ? "opacity-70" : ""} ${
+        sortable.isOver ? "ring-1 ring-primary/60" : ""
+      }`}
+    >
+      <div className="flex items-start gap-2">
+        <button
+          type="button"
+          className="w-full min-w-0 text-left"
+          onClick={onSelect}
+        >
+          <p className="font-medium truncate">{role.name}</p>
+          <p className="text-xs">Position: {role.position}</p>
+        </button>
+        <button
+          type="button"
+          className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-sm hover:bg-accent disabled:opacity-40"
+          onClick={(event) => event.stopPropagation()}
+          aria-label={`Drag ${role.name}`}
+          disabled={disabled}
+          {...(sortable.attributes as unknown as Record<string, unknown>)}
+          {...(sortable.listeners as unknown as Record<string, unknown>)}
+        >
+          <GripVertical className="h-4 w-4 opacity-60" />
+        </button>
+      </div>
+    </div>
+  );
 };
 
 const makeRoleDraft = (role: Role): RoleDraft => ({
@@ -202,11 +291,40 @@ export const GuildSettingsModal = ({
 
   const reorderRolesMutation = useMutation({
     mutationFn: (payload: Array<{ id: string; position: number }>) => api.reorderGuildRoles(guildId!, payload),
-    onSuccess: roles => {
-      queryClient.setQueryData<Role[]>(queryKeys.guildRoles(guildId!), roles.sort(roleSortDesc));
+    onMutate: async payload => {
+      if (!guildId) {
+        return {
+          previous: undefined as Role[] | undefined,
+        };
+      }
+
+      await queryClient.cancelQueries({
+        queryKey: queryKeys.guildRoles(guildId),
+      });
+
+      const previous = queryClient.getQueryData<Role[]>(
+        queryKeys.guildRoles(guildId),
+      );
+      if (previous) {
+        queryClient.setQueryData<Role[]>(
+          queryKeys.guildRoles(guildId),
+          applyRoleReorder(previous, payload),
+        );
+      }
+
+      return { previous };
     },
-    onError: error => {
+    onError: (error, _payload, context) => {
+      if (guildId && context?.previous) {
+        queryClient.setQueryData<Role[]>(
+          queryKeys.guildRoles(guildId),
+          [...context.previous].sort(roleSortDesc),
+        );
+      }
       toast.error(error instanceof Error ? error.message : "Could not reorder roles.");
+    },
+    onSuccess: roles => {
+      queryClient.setQueryData<Role[]>(queryKeys.guildRoles(guildId!), [...roles].sort(roleSortDesc));
     },
   });
 
@@ -250,8 +368,18 @@ export const GuildSettingsModal = ({
     [channels],
   );
 
-  const selectedRole =
-    (selectedRoleId ? roles.find(role => role.id === selectedRoleId) : null) ?? roles[0] ?? null;
+  const selectedRole = selectedRoleId
+    ? (roles.find(role => role.id === selectedRoleId) ?? null)
+    : null;
+  const roleIds = useMemo(() => roles.map((role) => role.id), [roles]);
+  const roleDnDSensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: { distance: 6 },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    }),
+  );
 
   useEffect(() => {
     if (!open) {
@@ -282,18 +410,27 @@ export const GuildSettingsModal = ({
   }, [guild?.id, guild]);
 
   useEffect(() => {
-    if (!selectedRole && roles.length > 0) {
-      setSelectedRoleId(roles[0]!.id);
+    if (roles.length === 0) {
+      setSelectedRoleId(null);
       return;
     }
 
+    const hasSelectedRole = Boolean(
+      selectedRoleId && roles.some((role) => role.id === selectedRoleId),
+    );
+    if (!hasSelectedRole) {
+      setSelectedRoleId(roles[0]!.id);
+    }
+  }, [roles, selectedRoleId]);
+
+  useEffect(() => {
     if (!selectedRole) {
       setRoleDraft(null);
       return;
     }
 
     setRoleDraft(makeRoleDraft(selectedRole));
-  }, [roles, selectedRole]);
+  }, [selectedRole]);
 
   if (!open) {
     return null;
@@ -324,28 +461,28 @@ export const GuildSettingsModal = ({
     });
   };
 
-  const moveRole = async (roleId: string, direction: "up" | "down"): Promise<void> => {
-    if (!guildId) {
+  const handleRoleDragEnd = async (event: DragEndEvent): Promise<void> => {
+    if (!guildId || !canManageRoles || reorderRolesMutation.isPending) {
       return;
     }
 
-    const index = roles.findIndex(role => role.id === roleId);
-    if (index === -1) {
+    const { active, over } = event;
+    if (!over || active.id === over.id) {
       return;
     }
 
-    const targetIndex = direction === "up" ? index - 1 : index + 1;
-    if (targetIndex < 0 || targetIndex >= roles.length) {
+    const activeId = String(active.id);
+    const overId = String(over.id);
+    const fromIndex = roles.findIndex((role) => role.id === activeId);
+    const toIndex = roles.findIndex((role) => role.id === overId);
+    if (fromIndex === -1 || toIndex === -1) {
       return;
     }
 
-    const reordered = [...roles];
-    const [moved] = reordered.splice(index, 1);
-    reordered.splice(targetIndex, 0, moved!);
-
-    const payload = reordered.map((role, positionIndex) => ({
+    const reordered = arrayMove(roles, fromIndex, toIndex);
+    const payload = reordered.map((role, index) => ({
       id: role.id,
-      position: reordered.length - positionIndex - 1,
+      position: reordered.length - index - 1,
     }));
 
     await reorderRolesMutation.mutateAsync(payload);
@@ -620,41 +757,31 @@ export const GuildSettingsModal = ({
                         Create Role
                       </Button>
                     </div>
-                    <div className="space-y-1">
-                      {roles.map((role, index) => (
-                        <div
-                          key={role.id}
-                          className={`rounded border p-2 ${selectedRole?.id === role.id ? "bg-accent" : ""}`}
-                        >
-                          <button
-                            type="button"
-                            className="w-full text-left"
-                            onClick={() => setSelectedRoleId(role.id)}
-                          >
-                            <p className="font-medium truncate">{role.name}</p>
-                            <p className="text-xs">Position: {role.position}</p>
-                          </button>
-                          <div className="mt-2 flex gap-1">
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              disabled={index === 0 || reorderRolesMutation.isPending}
-                              onClick={() => moveRole(role.id, "up")}
-                            >
-                              Up
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              disabled={index === roles.length - 1 || reorderRolesMutation.isPending}
-                              onClick={() => moveRole(role.id, "down")}
-                            >
-                              Down
-                            </Button>
-                          </div>
+                    <DndContext
+                      sensors={roleDnDSensors}
+                      collisionDetection={closestCenter}
+                      onDragEnd={handleRoleDragEnd}
+                    >
+                      <SortableContext
+                        items={roleIds}
+                        strategy={verticalListSortingStrategy}
+                      >
+                        <div className="space-y-1">
+                          {roles.map((role) => (
+                            <SortableRoleRow
+                              key={role.id}
+                              role={role}
+                              selected={selectedRoleId === role.id}
+                              disabled={reorderRolesMutation.isPending}
+                              onSelect={() => setSelectedRoleId(role.id)}
+                            />
+                          ))}
                         </div>
-                      ))}
-                    </div>
+                      </SortableContext>
+                    </DndContext>
+                    <p className="px-1 text-xs text-muted-foreground">
+                      Drag roles to reorder.
+                    </p>
                   </div>
 
                   <div className="space-y-4">
