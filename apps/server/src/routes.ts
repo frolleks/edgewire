@@ -2,7 +2,16 @@ import { handleAuth } from "./controllers/auth";
 import { createTyping, deleteChannel, patchChannel, updateReadState } from "./controllers/channels";
 import { apiNotFoundAfterAuth, internalServerError } from "./controllers/common";
 import { createToken } from "./controllers/gateway";
-import { createGuild, createGuildChannel, getGuild, getGuildChannels } from "./controllers/guilds";
+import {
+  bulkModifyGuildChannelPositions,
+  createGuild,
+  createGuildChannel,
+  getGuild,
+  getGuildChannels,
+  getMyGuildPermissions,
+  listGuildMembers,
+  updateGuildSettings,
+} from "./controllers/guilds";
 import { getHealth } from "./controllers/health";
 import { acceptInvite, createChannelInvite, getInvite } from "./controllers/invites";
 import { createMyChannel, getMe, listMyChannels, listMyGuilds, updateMeProfile } from "./controllers/me";
@@ -12,6 +21,16 @@ import {
   getChannelMessages,
   updateChannelMessage,
 } from "./controllers/messages";
+import { deleteChannelPermissionOverwrite, editChannelPermissionOverwrite } from "./controllers/overwrites";
+import {
+  addMemberRole,
+  createRole,
+  deleteRole,
+  listRoles,
+  removeMemberRole,
+  reorderRoles,
+  updateRole,
+} from "./controllers/roles";
 import { searchUsers } from "./controllers/users";
 import { corsPreflight, methodNotAllowed } from "./http";
 
@@ -100,16 +119,56 @@ export const routes = {
     GET: safe(getGuild as Handler),
     POST: auth404,
     PUT: auth404,
-    PATCH: auth404,
+    PATCH: safe(updateGuildSettings as Handler),
     DELETE: auth404,
     OPTIONS: corsPreflight,
   },
   "/api/guilds/:guildId/channels": {
     GET: safe(getGuildChannels as Handler),
     POST: safe(createGuildChannel as Handler),
-    PUT: notAllowed(["GET", "POST"]),
-    PATCH: notAllowed(["GET", "POST"]),
+    PUT: notAllowed(["GET", "POST", "PATCH"]),
+    PATCH: safe(bulkModifyGuildChannelPositions as Handler),
     DELETE: notAllowed(["GET", "POST"]),
+    OPTIONS: corsPreflight,
+  },
+  "/api/guilds/:guildId/members": {
+    GET: safe(listGuildMembers as Handler),
+    POST: auth404,
+    PUT: auth404,
+    PATCH: auth404,
+    DELETE: auth404,
+    OPTIONS: corsPreflight,
+  },
+  "/api/guilds/:guildId/permissions/@me": {
+    GET: safe(getMyGuildPermissions as Handler),
+    POST: auth404,
+    PUT: auth404,
+    PATCH: auth404,
+    DELETE: auth404,
+    OPTIONS: corsPreflight,
+  },
+  "/api/guilds/:guildId/roles": {
+    GET: safe(listRoles as Handler),
+    POST: safe(createRole as Handler),
+    PATCH: safe(reorderRoles as Handler),
+    PUT: notAllowed(["GET", "POST", "PATCH"]),
+    DELETE: notAllowed(["GET", "POST", "PATCH"]),
+    OPTIONS: corsPreflight,
+  },
+  "/api/guilds/:guildId/roles/:roleId": {
+    PATCH: safe(updateRole as Handler),
+    DELETE: safe(deleteRole as Handler),
+    GET: auth404,
+    POST: auth404,
+    PUT: auth404,
+    OPTIONS: corsPreflight,
+  },
+  "/api/guilds/:guildId/members/:userId/roles/:roleId": {
+    PUT: safe(addMemberRole as Handler),
+    DELETE: safe(removeMemberRole as Handler),
+    GET: auth404,
+    POST: auth404,
+    PATCH: auth404,
     OPTIONS: corsPreflight,
   },
   "/api/channels/:channelId": {
@@ -182,6 +241,14 @@ export const routes = {
     PUT: auth404,
     PATCH: auth404,
     DELETE: auth404,
+    OPTIONS: corsPreflight,
+  },
+  "/api/channels/:channelId/permissions/:overwriteId": {
+    PUT: safe(editChannelPermissionOverwrite as Handler),
+    DELETE: safe(deleteChannelPermissionOverwrite as Handler),
+    GET: auth404,
+    POST: auth404,
+    PATCH: auth404,
     OPTIONS: corsPreflight,
   },
   "/api/*": {

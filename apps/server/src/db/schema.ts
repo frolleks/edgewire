@@ -1,4 +1,5 @@
 import {
+  boolean,
   check,
   index,
   integer,
@@ -35,9 +36,38 @@ export const guilds = pgTable(
     ownerId: text("owner_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
+    verificationLevel: integer("verification_level").notNull().default(0),
+    defaultMessageNotifications: integer("default_message_notifications").notNull().default(0),
+    explicitContentFilter: integer("explicit_content_filter").notNull().default(0),
+    preferredLocale: text("preferred_locale").notNull().default("en-US"),
+    systemChannelId: text("system_channel_id"),
+    rulesChannelId: text("rules_channel_id"),
+    publicUpdatesChannelId: text("public_updates_channel_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   table => [index("guilds_owner_id_idx").on(table.ownerId)],
+);
+
+export const guildRoles = pgTable(
+  "guild_roles",
+  {
+    id: text("id").primaryKey(),
+    guildId: text("guild_id")
+      .notNull()
+      .references(() => guilds.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    permissions: text("permissions").notNull().default("0"),
+    position: integer("position").notNull().default(0),
+    color: integer("color"),
+    hoist: boolean("hoist").notNull().default(false),
+    mentionable: boolean("mentionable").notNull().default(false),
+    managed: boolean("managed").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  table => [
+    index("guild_roles_guild_id_idx").on(table.guildId),
+    index("guild_roles_guild_position_idx").on(table.guildId, table.position),
+  ],
 );
 
 export const channels = pgTable(
@@ -85,6 +115,26 @@ export const guildMembers = pgTable(
   table => [
     primaryKey({ columns: [table.guildId, table.userId], name: "guild_members_pk" }),
     index("guild_members_user_id_idx").on(table.userId),
+  ],
+);
+
+export const guildMemberRoles = pgTable(
+  "guild_member_roles",
+  {
+    guildId: text("guild_id")
+      .notNull()
+      .references(() => guilds.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    roleId: text("role_id")
+      .notNull()
+      .references(() => guildRoles.id, { onDelete: "cascade" }),
+  },
+  table => [
+    primaryKey({ columns: [table.guildId, table.userId, table.roleId], name: "guild_member_roles_pk" }),
+    index("guild_member_roles_guild_user_idx").on(table.guildId, table.userId),
+    index("guild_member_roles_guild_role_idx").on(table.guildId, table.roleId),
   ],
 );
 
@@ -140,6 +190,24 @@ export const messageReads = pgTable(
   table => [primaryKey({ columns: [table.channelId, table.userId], name: "message_reads_pk" })],
 );
 
+export const channelPermissionOverwrites = pgTable(
+  "channel_permission_overwrites",
+  {
+    channelId: text("channel_id")
+      .notNull()
+      .references(() => channels.id, { onDelete: "cascade" }),
+    overwriteId: text("overwrite_id").notNull(),
+    type: integer("type").notNull(),
+    allow: text("allow").notNull().default("0"),
+    deny: text("deny").notNull().default("0"),
+  },
+  table => [
+    primaryKey({ columns: [table.channelId, table.overwriteId], name: "channel_permission_overwrites_pk" }),
+    index("channel_permission_overwrites_channel_idx").on(table.channelId),
+    check("channel_permission_overwrites_type_check", sql`${table.type} in (0, 1)`),
+  ],
+);
+
 export const invites = pgTable(
   "invites",
   {
@@ -169,10 +237,13 @@ export const invites = pgTable(
 export const schema = {
   users,
   guilds,
+  guildRoles,
   guildMembers,
+  guildMemberRoles,
   channels,
   channelMembers,
   messages,
   messageReads,
+  channelPermissionOverwrites,
   invites,
 };

@@ -1,0 +1,476 @@
+import type { GuildChannelPayload } from "@discord/types";
+import { ChannelType } from "@discord/types";
+import {
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  closestCenter,
+  type DragEndEvent,
+  useDroppable,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core";
+import { SortableContext, arrayMove, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import { ChevronDown, ChevronRight, GripVertical, Plus } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Button } from "@/components/ui/button";
+
+type ChannelTreeProps = {
+  guildId: string;
+  channels: GuildChannelPayload[];
+  activeChannelId: string | null;
+  canManageChannels: boolean;
+  onOpenChannel: (channelId: string) => void;
+  onCreateCategory: () => void;
+  onCreateChannel: (parentId: string | null) => void;
+  onReorder: (payload: Array<{ id: string; position: number; parent_id: string | null; lock_permissions?: boolean }>) => Promise<void>;
+};
+
+type TreeGroup = {
+  category: GuildChannelPayload | null;
+  channels: GuildChannelPayload[];
+};
+
+const byPositionThenId = (a: GuildChannelPayload, b: GuildChannelPayload): number => {
+  if (a.position !== b.position) {
+    return a.position - b.position;
+  }
+  return a.id.localeCompare(b.id);
+};
+
+const buildGuildTree = (guildChannels: GuildChannelPayload[]): TreeGroup[] => {
+  const categories = guildChannels
+    .filter(channel => channel.type === ChannelType.GUILD_CATEGORY)
+    .sort(byPositionThenId);
+
+  const textChannels = guildChannels
+    .filter(channel => channel.type === ChannelType.GUILD_TEXT)
+    .sort(byPositionThenId);
+
+  const byParent = new Map<string | null, GuildChannelPayload[]>();
+  for (const text of textChannels) {
+    const key = text.parent_id ?? null;
+    const existing = byParent.get(key) ?? [];
+    existing.push(text);
+    byParent.set(key, existing);
+  }
+
+  const result: TreeGroup[] = [];
+  const ungrouped = byParent.get(null) ?? [];
+  result.push({ category: null, channels: ungrouped });
+
+  for (const category of categories) {
+    result.push({
+      category,
+      channels: byParent.get(category.id) ?? [],
+    });
+  }
+
+  return result;
+};
+
+const isCategoryId = (id: string): boolean => id.startsWith("category:");
+const isChannelId = (id: string): boolean => id.startsWith("channel:");
+const fromCategoryId = (id: string): string => id.replace(/^category:/, "");
+const fromChannelId = (id: string): string => id.replace(/^channel:/, "");
+
+const DragHandle = ({
+  attributes,
+  listeners,
+  disabled,
+}: {
+  attributes?: Record<string, unknown>;
+  listeners?: Record<string, unknown>;
+  disabled?: boolean;
+}) => (
+  <button
+    type="button"
+    className="inline-flex h-6 w-6 items-center justify-center rounded-sm hover:bg-accent disabled:opacity-40"
+    onClick={event => event.stopPropagation()}
+    disabled={disabled}
+    {...attributes}
+    {...listeners}
+    aria-label="Drag item"
+  >
+    <GripVertical className="h-3.5 w-3.5 opacity-60" />
+  </button>
+);
+
+const SortableCategoryHeader = ({
+  category,
+  collapsed,
+  onToggle,
+  canManageChannels,
+  onCreateChannel,
+  children,
+}: {
+  category: GuildChannelPayload;
+  collapsed: boolean;
+  onToggle: () => void;
+  canManageChannels: boolean;
+  onCreateChannel: () => void;
+  children: React.ReactNode;
+}) => {
+  const sortable = useSortable({ id: `category:${category.id}`, disabled: !canManageChannels });
+  const style = {
+    transform: CSS.Transform.toString(sortable.transform),
+    transition: sortable.transition,
+  };
+
+  return (
+    <div
+      ref={sortable.setNodeRef}
+      style={style}
+      className={`space-y-1 rounded ${sortable.isOver ? "bg-accent/50 ring-1 ring-primary/40" : ""}`}
+    >
+      <div className="w-full flex items-center justify-between gap-1 px-1 py-1 rounded-sm hover:bg-accent">
+        <button type="button" className="w-full flex items-center gap-1 min-w-0" onClick={onToggle}>
+          {collapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+          <span className="text-xs uppercase tracking-wide truncate">{category.name}</span>
+        </button>
+        <div className="flex items-center gap-1">
+          <DragHandle
+            attributes={sortable.attributes as unknown as Record<string, unknown>}
+            listeners={sortable.listeners as Record<string, unknown>}
+            disabled={!canManageChannels}
+          />
+          {canManageChannels ? (
+            <Button
+              size="icon-xs"
+              variant="ghost"
+              onClick={event => {
+                event.stopPropagation();
+                onCreateChannel();
+              }}
+              aria-label={`Create channel in ${category.name}`}
+            >
+              <Plus />
+            </Button>
+          ) : null}
+        </div>
+      </div>
+      {children}
+    </div>
+  );
+};
+
+const SortableChannelRow = ({
+  channel,
+  active,
+  onOpen,
+  indent = false,
+  canManageChannels,
+}: {
+  channel: GuildChannelPayload;
+  active: boolean;
+  onOpen: () => void;
+  indent?: boolean;
+  canManageChannels: boolean;
+}) => {
+  const sortable = useSortable({ id: `channel:${channel.id}`, disabled: !canManageChannels });
+  const style = {
+    transform: CSS.Transform.toString(sortable.transform),
+    transition: sortable.transition,
+  };
+
+  return (
+    <button
+      ref={sortable.setNodeRef}
+      style={style}
+      type="button"
+      onClick={onOpen}
+      className={`${indent ? "ml-4" : ""} w-full flex items-center justify-between gap-2 rounded-md px-2 py-1.5 ${
+        active ? "bg-accent" : "hover:bg-accent"
+      } ${sortable.isOver ? "ring-1 ring-primary" : ""}`}
+    >
+      <span className="flex items-center gap-2 truncate">
+        <span>#</span>
+        <span className="truncate">{channel.name}</span>
+      </span>
+      <DragHandle
+        attributes={sortable.attributes as unknown as Record<string, unknown>}
+        listeners={sortable.listeners as Record<string, unknown>}
+        disabled={!canManageChannels}
+      />
+    </button>
+  );
+};
+
+const applyCategoryReorder = (
+  channels: GuildChannelPayload[],
+  activeCategoryId: string,
+  overCategoryId: string,
+): GuildChannelPayload[] => {
+  const categories = channels
+    .filter(channel => channel.type === ChannelType.GUILD_CATEGORY)
+    .sort(byPositionThenId);
+
+  const fromIndex = categories.findIndex(category => category.id === activeCategoryId);
+  const toIndex = categories.findIndex(category => category.id === overCategoryId);
+  if (fromIndex === -1 || toIndex === -1) {
+    return channels;
+  }
+
+  const reordered = arrayMove(categories, fromIndex, toIndex).map((category, index) => ({
+    ...category,
+    position: index,
+  }));
+
+  const byId = new Map(reordered.map(category => [category.id, category]));
+  return channels.map(channel => {
+    if (channel.type !== ChannelType.GUILD_CATEGORY) {
+      return channel;
+    }
+    return byId.get(channel.id) ?? channel;
+  });
+};
+
+const applyChannelMove = (
+  channels: GuildChannelPayload[],
+  activeChannelId: string,
+  overId: string,
+): GuildChannelPayload[] => {
+  const activeChannel = channels.find(channel => channel.id === activeChannelId && channel.type === ChannelType.GUILD_TEXT);
+  if (!activeChannel) {
+    return channels;
+  }
+
+  let targetParentId: string | null = activeChannel.parent_id;
+  let targetIndex = -1;
+
+  if (isChannelId(overId)) {
+    const overChannel = channels.find(channel => channel.id === fromChannelId(overId) && channel.type === ChannelType.GUILD_TEXT);
+    if (!overChannel) {
+      return channels;
+    }
+    targetParentId = overChannel.parent_id;
+    const siblings = channels
+      .filter(channel => channel.type === ChannelType.GUILD_TEXT && channel.parent_id === targetParentId && channel.id !== activeChannel.id)
+      .sort(byPositionThenId);
+    targetIndex = siblings.findIndex(channel => channel.id === overChannel.id);
+  } else if (isCategoryId(overId)) {
+    targetParentId = fromCategoryId(overId);
+  } else if (overId === "uncategorized") {
+    targetParentId = null;
+  }
+
+  const siblings = channels
+    .filter(channel => channel.type === ChannelType.GUILD_TEXT && channel.parent_id === targetParentId && channel.id !== activeChannel.id)
+    .sort(byPositionThenId);
+
+  if (targetIndex < 0) {
+    targetIndex = siblings.length;
+  }
+
+  const nextSiblings = [...siblings];
+  nextSiblings.splice(targetIndex, 0, { ...activeChannel, parent_id: targetParentId });
+
+  const updatedSiblingMap = new Map(
+    nextSiblings.map((channel, index) => [
+      channel.id,
+      {
+        ...channel,
+        parent_id: targetParentId,
+        position: index,
+      },
+    ]),
+  );
+
+  const currentParentSiblings = channels
+    .filter(
+      channel =>
+        channel.type === ChannelType.GUILD_TEXT &&
+        channel.parent_id === activeChannel.parent_id &&
+        channel.id !== activeChannel.id &&
+        channel.parent_id !== targetParentId,
+    )
+    .sort(byPositionThenId)
+    .map((channel, index) => ({ ...channel, position: index }));
+
+  const currentParentMap = new Map(currentParentSiblings.map(channel => [channel.id, channel]));
+
+  return channels.map(channel => {
+    if (channel.type !== ChannelType.GUILD_TEXT) {
+      return channel;
+    }
+
+    if (updatedSiblingMap.has(channel.id)) {
+      return updatedSiblingMap.get(channel.id)!;
+    }
+
+    if (currentParentMap.has(channel.id)) {
+      return currentParentMap.get(channel.id)!;
+    }
+
+    return channel;
+  });
+};
+
+const toBulkPayload = (channels: GuildChannelPayload[]) =>
+  channels
+    .filter(channel => channel.type === ChannelType.GUILD_TEXT || channel.type === ChannelType.GUILD_CATEGORY)
+    .map(channel => ({
+      id: channel.id,
+      position: channel.position,
+      parent_id: channel.parent_id,
+    }));
+
+export const GuildChannelTree = ({
+  guildId,
+  channels,
+  activeChannelId,
+  canManageChannels,
+  onOpenChannel,
+  onCreateCategory,
+  onCreateChannel,
+  onReorder,
+}: ChannelTreeProps) => {
+  const [localChannels, setLocalChannels] = useState(channels);
+  const [collapsedCategories, setCollapsedCategories] = useState<Record<string, boolean>>({});
+
+  useEffect(() => {
+    setLocalChannels(channels);
+  }, [channels]);
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: { distance: 6 },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    }),
+  );
+
+  const tree = useMemo(() => buildGuildTree(localChannels), [localChannels]);
+  const uncategorizedDrop = useDroppable({ id: "uncategorized" });
+
+  const categoryIds = tree.filter(group => group.category).map(group => `category:${group.category!.id}`);
+  const uncategorizedIds = tree.find(group => group.category === null)?.channels.map(channel => `channel:${channel.id}`) ?? [];
+
+  const handleDragEnd = async (event: DragEndEvent): Promise<void> => {
+    if (!canManageChannels) {
+      return;
+    }
+
+    const { active, over } = event;
+    if (!over || active.id === over.id) {
+      return;
+    }
+
+    const activeId = String(active.id);
+    const overId = String(over.id);
+
+    let nextChannels = localChannels;
+
+    if (isCategoryId(activeId) && isCategoryId(overId)) {
+      nextChannels = applyCategoryReorder(localChannels, fromCategoryId(activeId), fromCategoryId(overId));
+    } else if (isChannelId(activeId)) {
+      nextChannels = applyChannelMove(localChannels, fromChannelId(activeId), overId);
+    }
+
+    if (nextChannels === localChannels) {
+      return;
+    }
+
+    setLocalChannels(nextChannels);
+    await onReorder(toBulkPayload(nextChannels));
+  };
+
+  return (
+    <div className="flex-1 overflow-y-auto px-2 pb-2 pt-2 space-y-2" data-guild-id={guildId}>
+      <div className="px-2 flex items-center justify-between">
+        <p className="text-xs uppercase tracking-wide">Channels</p>
+        {canManageChannels ? (
+          <div className="flex items-center gap-1">
+            <Button size="icon-xs" variant="outline" onClick={onCreateCategory} aria-label="Create category">
+              <Plus />
+            </Button>
+            <Button
+              size="icon-xs"
+              variant="outline"
+              onClick={() => onCreateChannel(null)}
+              aria-label="Create text channel"
+            >
+              <Plus />
+            </Button>
+          </div>
+        ) : null}
+      </div>
+
+      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+        <SortableContext items={categoryIds} strategy={verticalListSortingStrategy}>
+          <div className="space-y-2">
+            <SortableContext items={["uncategorized", ...uncategorizedIds]} strategy={verticalListSortingStrategy}>
+              <div
+                ref={uncategorizedDrop.setNodeRef}
+                id="uncategorized"
+                className={`space-y-1 rounded-sm ${
+                  uncategorizedDrop.isOver ? "ring-1 ring-primary/50 bg-accent/30" : ""
+                }`}
+              >
+                {tree
+                  .find(group => group.category === null)
+                  ?.channels.map(channel => (
+                    <SortableChannelRow
+                      key={channel.id}
+                      channel={channel}
+                      active={activeChannelId === channel.id}
+                      onOpen={() => onOpenChannel(channel.id)}
+                      canManageChannels={canManageChannels}
+                    />
+                  ))}
+              </div>
+            </SortableContext>
+
+            {tree
+              .filter(group => group.category)
+              .map(group => {
+                const category = group.category!;
+                const collapsed = Boolean(collapsedCategories[category.id]);
+                const childIds = group.channels.map(channel => `channel:${channel.id}`);
+
+                return (
+                  <SortableCategoryHeader
+                    key={category.id}
+                    category={category}
+                    collapsed={collapsed}
+                    canManageChannels={canManageChannels}
+                    onToggle={() =>
+                      setCollapsedCategories(previous => ({
+                        ...previous,
+                        [category.id]: !Boolean(previous[category.id]),
+                      }))
+                    }
+                    onCreateChannel={() => onCreateChannel(category.id)}
+                  >
+                    {!collapsed ? (
+                      <SortableContext items={childIds} strategy={verticalListSortingStrategy}>
+                        <div className="space-y-1" id={`category:${category.id}`}>
+                          {group.channels.map(channel => (
+                            <SortableChannelRow
+                              key={channel.id}
+                              channel={channel}
+                              active={activeChannelId === channel.id}
+                              onOpen={() => onOpenChannel(channel.id)}
+                              indent
+                              canManageChannels={canManageChannels}
+                            />
+                          ))}
+                        </div>
+                      </SortableContext>
+                    ) : null}
+                  </SortableCategoryHeader>
+                );
+              })}
+          </div>
+        </SortableContext>
+      </DndContext>
+
+      {channels.length === 0 ? <p className="px-2 text-sm">No channels yet.</p> : null}
+      {canManageChannels ? <p className="px-2 text-[11px]">Drag channels to reorder or move between categories.</p> : null}
+    </div>
+  );
+};
+
+export default GuildChannelTree;

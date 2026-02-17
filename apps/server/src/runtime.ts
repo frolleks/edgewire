@@ -1,6 +1,8 @@
 import type {
+  ChannelPermissionOverwrite,
   DmChannelPayload,
   GatewayPacket,
+  GuildRole,
   GuildChannelPayload,
   GuildCreateEvent,
   InvitePayload,
@@ -16,8 +18,11 @@ import { auth } from "./auth";
 import { db } from "./db";
 import {
   channelMembers,
+  channelPermissionOverwrites,
   channels,
   guildMembers,
+  guildMemberRoles,
+  guildRoles,
   guilds,
   invites,
   messageReads,
@@ -98,6 +103,7 @@ export type ChannelRow = typeof channels.$inferSelect;
 type MessageRow = typeof messages.$inferSelect;
 type GuildRow = typeof guilds.$inferSelect;
 type InviteRow = typeof invites.$inferSelect;
+type GuildRoleRow = typeof guildRoles.$inferSelect;
 
 export const gatewayConnections = new Map<string, GatewayConnection>();
 export const connectionsByUserId = new Map<string, Set<string>>();
@@ -286,6 +292,13 @@ export const toGuildPayload = (guild: GuildRow): PartialGuild => ({
   name: guild.name,
   icon: guild.icon,
   owner_id: guild.ownerId,
+  verification_level: guild.verificationLevel,
+  default_message_notifications: guild.defaultMessageNotifications,
+  explicit_content_filter: guild.explicitContentFilter,
+  preferred_locale: guild.preferredLocale,
+  system_channel_id: guild.systemChannelId,
+  rules_channel_id: guild.rulesChannelId,
+  public_updates_channel_id: guild.publicUpdatesChannelId,
 });
 
 export const toGuildChannelPayload = (channel: ChannelRow): GuildChannelPayload => ({
@@ -296,6 +309,44 @@ export const toGuildChannelPayload = (channel: ChannelRow): GuildChannelPayload 
   name: channel.name ?? "",
   topic: channel.topic,
   position: channel.position,
+});
+
+export const listChannelPermissionOverwrites = async (channelId: string): Promise<ChannelPermissionOverwrite[]> => {
+  const rows = await db
+    .select({
+      id: channelPermissionOverwrites.overwriteId,
+      type: channelPermissionOverwrites.type,
+      allow: channelPermissionOverwrites.allow,
+      deny: channelPermissionOverwrites.deny,
+    })
+    .from(channelPermissionOverwrites)
+    .where(eq(channelPermissionOverwrites.channelId, channelId));
+
+  return rows
+    .filter(row => row.type === 0 || row.type === 1)
+    .map(row => ({
+      id: row.id,
+      type: row.type as 0 | 1,
+      allow: row.allow,
+      deny: row.deny,
+    }));
+};
+
+export const toGuildChannelPayloadWithOverwrites = async (channel: ChannelRow): Promise<GuildChannelPayload> => ({
+  ...toGuildChannelPayload(channel),
+  permission_overwrites: await listChannelPermissionOverwrites(channel.id),
+});
+
+export const toGuildRolePayload = (role: GuildRoleRow): GuildRole => ({
+  id: role.id,
+  guild_id: role.guildId,
+  name: role.name,
+  permissions: role.permissions,
+  position: role.position,
+  color: role.color,
+  hoist: role.hoist,
+  mentionable: role.mentionable,
+  managed: role.managed,
 });
 
 export const toDmChannelPayload = async (channel: ChannelRow, viewerId: string): Promise<DmChannelPayload | null> => {
@@ -410,6 +461,25 @@ export const getUserGuilds = async (userId: string): Promise<PartialGuild[]> => 
   return rows;
 };
 
+export const listGuildRoles = async (guildId: string): Promise<GuildRole[]> => {
+  const rows = await db
+    .select()
+    .from(guildRoles)
+    .where(eq(guildRoles.guildId, guildId))
+    .orderBy(desc(guildRoles.position), asc(sql`${guildRoles.id}::bigint`));
+
+  return rows.map(toGuildRolePayload);
+};
+
+export const listGuildMemberRoleIds = async (guildId: string, userId: string): Promise<string[]> => {
+  const rows = await db
+    .select({ roleId: guildMemberRoles.roleId })
+    .from(guildMemberRoles)
+    .where(and(eq(guildMemberRoles.guildId, guildId), eq(guildMemberRoles.userId, userId)));
+
+  return rows.map(row => row.roleId);
+};
+
 export const getGuildChannels = async (guildId: string): Promise<GuildChannelPayload[]> => {
   const rows = await db
     .select()
@@ -417,7 +487,7 @@ export const getGuildChannels = async (guildId: string): Promise<GuildChannelPay
     .where(and(eq(channels.guildId, guildId), inArray(channels.type, [ChannelType.GUILD_TEXT, ChannelType.GUILD_CATEGORY])))
     .orderBy(asc(channels.position), asc(sql`${channels.id}::bigint`));
 
-  return rows.map(toGuildChannelPayload);
+  return Promise.all(rows.map(toGuildChannelPayloadWithOverwrites));
 };
 
 export const getGuildChannelTree = async (

@@ -15,6 +15,13 @@
       "when": 1771288840572,
       "tag": "0001_guilds",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1771295300000,
+      "tag": "0002_roles_permissions",
+      "breakpoints": true
     }
   ]
 }

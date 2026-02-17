@@ -2,10 +2,12 @@ import type { GuildChannelPayload, MessagePayload } from "@discord/types";
 import { ChannelType } from "@discord/types";
 import { QueryClient, QueryClientProvider, useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { InfiniteData } from "@tanstack/react-query";
-import { ChevronDown, ChevronRight, Home, Plus, X } from "lucide-react";
+import { Home, Plus, X } from "lucide-react";
 import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Link, Navigate, Outlet, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 import { Toaster, toast } from "sonner";
+import GuildChannelTree from "@/components/guild-channel-tree";
+import GuildSettingsModal from "@/components/guild-settings-modal";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -21,6 +23,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useGateway } from "@/hooks/use-gateway";
 import { authClient } from "@/lib/auth-client";
 import { api, type CurrentUser, type DmChannel, type Guild, type Invite, type TypingEvent } from "@/lib/api";
+import { PermissionBits, computeChannelPermissions, hasPermission, parsePermissions } from "@/lib/permissions";
 import { queryKeys } from "@/lib/query-keys";
 import "./index.css";
 
@@ -112,37 +115,25 @@ const byPositionThenId = (a: GuildChannelPayload, b: GuildChannelPayload): numbe
   return a.id.localeCompare(b.id);
 };
 
-const buildGuildTree = (guildChannels: GuildChannelPayload[]): Array<{ category: GuildChannelPayload | null; channels: GuildChannelPayload[] }> => {
-  const categories = guildChannels
-    .filter(channel => channel.type === ChannelType.GUILD_CATEGORY)
+const applyChannelBulkPatch = (
+  channels: GuildChannelPayload[],
+  payload: Array<{ id: string; position: number; parent_id?: string | null }>,
+): GuildChannelPayload[] => {
+  const patchById = new Map(payload.map(item => [item.id, item]));
+  return channels
+    .map(channel => {
+      const patch = patchById.get(channel.id);
+      if (!patch) {
+        return channel;
+      }
+
+      return {
+        ...channel,
+        position: patch.position,
+        parent_id: patch.parent_id === undefined ? channel.parent_id : patch.parent_id ?? null,
+      };
+    })
     .sort(byPositionThenId);
-
-  const textChannels = guildChannels
-    .filter(channel => channel.type === ChannelType.GUILD_TEXT)
-    .sort(byPositionThenId);
-
-  const byParent = new Map<string | null, GuildChannelPayload[]>();
-  for (const text of textChannels) {
-    const key = text.parent_id ?? null;
-    const existing = byParent.get(key) ?? [];
-    existing.push(text);
-    byParent.set(key, existing);
-  }
-
-  const result: Array<{ category: GuildChannelPayload | null; channels: GuildChannelPayload[] }> = [];
-  const ungrouped = byParent.get(null) ?? [];
-  if (ungrouped.length > 0) {
-    result.push({ category: null, channels: ungrouped });
-  }
-
-  for (const category of categories) {
-    result.push({
-      category,
-      channels: byParent.get(category.id) ?? [],
-    });
-  }
-
-  return result;
 };
 
 const Modal = ({
@@ -437,7 +428,7 @@ const ChatApp = () => {
   const [createChannelParentId, setCreateChannelParentId] = useState<string>("none");
   const [inviteOpen, setInviteOpen] = useState(false);
   const [inviteResult, setInviteResult] = useState<Invite | null>(null);
-  const [collapsedCategories, setCollapsedCategories] = useState<Record<string, boolean>>({});
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const typingThrottleRef = useRef(0);
   const listBottomRef = useRef<HTMLDivElement>(null);
@@ -466,6 +457,12 @@ const ChatApp = () => {
     enabled: route.mode === "guild" && Boolean(route.guildId),
   });
 
+  const guildPermissionsQuery = useQuery({
+    queryKey: queryKeys.guildPermissions(route.guildId ?? "none"),
+    queryFn: () => api.getMyGuildPermissions(route.guildId!),
+    enabled: route.mode === "guild" && Boolean(route.guildId),
+  });
+
   const usersSearchQuery = useQuery({
     queryKey: queryKeys.usersSearch(search),
     queryFn: () => api.searchUsers(search),
@@ -475,6 +472,10 @@ const ChatApp = () => {
   const dmChannels = dmChannelsQuery.data ?? [];
   const guilds = guildsQuery.data ?? [];
   const guildChannels = guildChannelsQuery.data ?? [];
+  const guildPermissions = parsePermissions(guildPermissionsQuery.data?.permissions);
+  const myGuildRoleIds = guildPermissionsQuery.data?.role_ids ?? [];
+  const hasGuildPermission = (bit: bigint): boolean =>
+    hasPermission(guildPermissions, PermissionBits.ADMINISTRATOR) || hasPermission(guildPermissions, bit);
 
   const activeDm = route.mode === "dm"
     ? dmChannels.find(channel => channel.id === route.channelId) ?? null
@@ -498,12 +499,9 @@ const ChatApp = () => {
     ? activeDm?.recipients[0]?.display_name ?? null
     : activeGuildChannel?.name ?? null;
 
-  const canManageGuild = Boolean(
-    route.mode === "guild" &&
-      activeGuild &&
-      meQuery.data &&
-      activeGuild.owner_id === meQuery.data.id,
-  );
+  const canManageGuild = route.mode === "guild" && hasGuildPermission(PermissionBits.MANAGE_GUILD);
+  const canManageRoles = route.mode === "guild" && hasGuildPermission(PermissionBits.MANAGE_ROLES);
+  const canManageChannels = route.mode === "guild" && hasGuildPermission(PermissionBits.MANAGE_CHANNELS);
 
   useGateway({
     enabled: Boolean(sessionUser?.id),
@@ -594,6 +592,38 @@ const ChatApp = () => {
     },
     onError: error => {
       toast.error(error instanceof Error ? error.message : "Could not create channel.");
+    },
+  });
+
+  const reorderGuildChannelsMutation = useMutation({
+    mutationFn: (payload: Array<{ id: string; position: number; parent_id?: string | null; lock_permissions?: boolean }>) =>
+      api.reorderGuildChannels(route.guildId!, payload),
+    onMutate: async payload => {
+      if (!route.guildId) {
+        return { previous: undefined as GuildChannelPayload[] | undefined };
+      }
+
+      await queryClient.cancelQueries({ queryKey: queryKeys.guildChannels(route.guildId) });
+      const previous = queryClient.getQueryData<GuildChannelPayload[]>(queryKeys.guildChannels(route.guildId));
+      if (previous) {
+        queryClient.setQueryData<GuildChannelPayload[]>(
+          queryKeys.guildChannels(route.guildId),
+          applyChannelBulkPatch(previous, payload),
+        );
+      }
+      return { previous };
+    },
+    onError: (error, _payload, context) => {
+      if (route.guildId && context?.previous) {
+        queryClient.setQueryData<GuildChannelPayload[]>(queryKeys.guildChannels(route.guildId), context.previous);
+      }
+      toast.error(error instanceof Error ? error.message : "Could not reorder channels.");
+    },
+    onSuccess: channels => {
+      if (!route.guildId) {
+        return;
+      }
+      queryClient.setQueryData<GuildChannelPayload[]>(queryKeys.guildChannels(route.guildId), channels.sort(byPositionThenId));
     },
   });
 
@@ -709,11 +739,36 @@ const ChatApp = () => {
   const typingEvents = typingQuery.data;
   const typingUserIds = new Set(typingEvents.map(event => event.user_id));
 
-  const activeGuildTree = useMemo(() => buildGuildTree(guildChannels), [guildChannels]);
   const categoryOptions = guildChannels.filter(channel => channel.type === ChannelType.GUILD_CATEGORY);
+  const activeGuildChannelPermissions = useMemo(() => {
+    if (route.mode !== "guild" || !route.guildId || !activeGuildChannel || !sessionUser?.id) {
+      return guildPermissions;
+    }
+
+    return computeChannelPermissions({
+      basePermissions: guildPermissions,
+      overwrites: activeGuildChannel.permission_overwrites ?? [],
+      memberRoleIds: myGuildRoleIds.filter(roleId => roleId !== route.guildId),
+      memberUserId: sessionUser.id,
+      guildId: route.guildId,
+    });
+  }, [
+    activeGuildChannel,
+    guildPermissions,
+    myGuildRoleIds,
+    route.guildId,
+    route.mode,
+    sessionUser?.id,
+  ]);
+
+  const canSendInActiveChannel =
+    route.mode === "dm" ||
+    (route.mode === "guild" &&
+      activeGuildChannel?.type === ChannelType.GUILD_TEXT &&
+      hasPermission(activeGuildChannelPermissions, PermissionBits.SEND_MESSAGES));
 
   const sendMessage = async (): Promise<void> => {
-    if (!activeMessageChannelId) {
+    if (!activeMessageChannelId || !canSendInActiveChannel) {
       return;
     }
 
@@ -747,7 +802,7 @@ const ChatApp = () => {
   };
 
   const openInvite = (): void => {
-    if (!activeMessageChannelId || route.mode !== "guild") {
+    if (!activeMessageChannelId || route.mode !== "guild" || !canManageChannels) {
       return;
     }
 
@@ -889,95 +944,70 @@ const ChatApp = () => {
                   <p className="font-semibold truncate">{activeGuild?.name ?? "Guild"}</p>
                   <p className="text-xs truncate">Channels</p>
                 </div>
-                {canManageGuild ? (
-                  <div className="flex gap-1">
-                    <Button
-                      size="icon-xs"
-                      variant="outline"
-                      onClick={() => {
-                        setCreateChannelType("4");
-                        setCreateChannelParentId("none");
-                        setCreateChannelOpen(true);
-                      }}
-                      aria-label="Create category"
-                    >
-                      <Plus />
+                <div className="flex items-center gap-1">
+                  {canManageGuild ? (
+                    <Button size="sm" variant="outline" onClick={() => setSettingsOpen(true)}>
+                      Settings
                     </Button>
-                    <Button
-                      size="icon-xs"
-                      variant="outline"
-                      onClick={() => {
-                        setCreateChannelType("0");
-                        setCreateChannelOpen(true);
-                      }}
-                      aria-label="Create text channel"
-                    >
-                      <Plus />
-                    </Button>
-                  </div>
-                ) : null}
-              </div>
-
-              <div className="flex-1 overflow-y-auto px-2 pb-2 pt-2 space-y-2">
-                {activeGuildTree.length === 0 ? <p className="px-2 text-sm">No channels yet.</p> : null}
-                {activeGuildTree.map(group => {
-                  if (!group.category) {
-                    return (
-                      <div key="uncategorized" className="space-y-1">
-                        <p className="px-2 text-xs uppercase tracking-wide">Text Channels</p>
-                        {group.channels.map(channel => {
-                          const active = route.channelId === channel.id;
-                          return (
-                            <Link
-                              key={channel.id}
-                              to={`/app/channels/${channel.guild_id}/${channel.id}`}
-                              className={`flex items-center gap-2 rounded-md px-2 py-1.5 ${active ? "bg-accent" : "hover:bg-accent"}`}
-                            >
-                              <span>#</span>
-                              <span className="truncate">{channel.name}</span>
-                            </Link>
-                          );
-                        })}
-                      </div>
-                    );
-                  }
-
-                  const collapsed = Boolean(collapsedCategories[group.category.id]);
-                  return (
-                    <div key={group.category.id} className="space-y-1">
-                      <button
-                        type="button"
-                        className="w-full flex items-center gap-1 px-1 py-1 rounded-sm hover:bg-accent"
-                        onClick={() =>
-                          setCollapsedCategories(old => ({
-                            ...old,
-                            [group.category!.id]: !Boolean(old[group.category!.id]),
-                          }))
-                        }
+                  ) : null}
+                  {canManageChannels ? (
+                    <>
+                      <Button
+                        size="icon-xs"
+                        variant="outline"
+                        onClick={() => {
+                          setCreateChannelType("4");
+                          setCreateChannelParentId("none");
+                          setCreateChannelOpen(true);
+                        }}
+                        aria-label="Create category"
                       >
-                        {collapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-                        <span className="text-xs uppercase tracking-wide truncate">{group.category.name}</span>
-                      </button>
-
-                      {!collapsed
-                        ? group.channels.map(channel => {
-                            const active = route.channelId === channel.id;
-                            return (
-                              <Link
-                                key={channel.id}
-                                to={`/app/channels/${channel.guild_id}/${channel.id}`}
-                                className={`ml-4 flex items-center gap-2 rounded-md px-2 py-1.5 ${active ? "bg-accent" : "hover:bg-accent"}`}
-                              >
-                                <span>#</span>
-                                <span className="truncate">{channel.name}</span>
-                              </Link>
-                            );
-                          })
-                        : null}
-                    </div>
-                  );
-                })}
+                        <Plus />
+                      </Button>
+                      <Button
+                        size="icon-xs"
+                        variant="outline"
+                        onClick={() => {
+                          setCreateChannelType("0");
+                          setCreateChannelOpen(true);
+                        }}
+                        aria-label="Create text channel"
+                      >
+                        <Plus />
+                      </Button>
+                    </>
+                  ) : null}
+                </div>
               </div>
+
+              <GuildChannelTree
+                guildId={route.guildId ?? ""}
+                channels={guildChannels}
+                activeChannelId={route.channelId}
+                canManageChannels={canManageChannels}
+                onOpenChannel={channelId => {
+                  if (!route.guildId) {
+                    return;
+                  }
+                  navigate(`/app/channels/${route.guildId}/${channelId}`);
+                }}
+                onCreateCategory={() => {
+                  setCreateChannelType("4");
+                  setCreateChannelParentId("none");
+                  setCreateChannelOpen(true);
+                }}
+                onCreateChannel={parentId => {
+                  setCreateChannelType("0");
+                  setCreateChannelParentId(parentId ?? "none");
+                  setCreateChannelOpen(true);
+                }}
+                onReorder={async payload => {
+                  if (!route.guildId) {
+                    return;
+                  }
+                  await reorderGuildChannelsMutation.mutateAsync(payload);
+                }}
+              />
             </>
           )}
 
@@ -1006,7 +1036,7 @@ const ChatApp = () => {
                     <p className="text-xs truncate">@{activeDm.recipients[0].username}</p>
                   ) : null}
                 </div>
-                {canManageGuild && route.mode === "guild" ? (
+                {canManageChannels && route.mode === "guild" ? (
                   <Button variant="outline" size="sm" onClick={openInvite}>
                     Create Invite
                   </Button>
@@ -1054,6 +1084,7 @@ const ChatApp = () => {
                     setComposerValue(event.target.value);
                     triggerTyping();
                   }}
+                  disabled={!canSendInActiveChannel}
                   onKeyDown={event => {
                     if (event.key === "Enter" && !event.shiftKey) {
                       event.preventDefault();
@@ -1067,8 +1098,14 @@ const ChatApp = () => {
                   }
                   className="min-h-20"
                 />
+                {!canSendInActiveChannel && route.mode === "guild" ? (
+                  <p className="mt-2 text-xs">You do not have permission to send messages in this server.</p>
+                ) : null}
                 <div className="mt-2 flex justify-end">
-                  <Button onClick={() => sendMessage().catch(() => undefined)} disabled={sendMessageMutation.isPending}>
+                  <Button
+                    onClick={() => sendMessage().catch(() => undefined)}
+                    disabled={sendMessageMutation.isPending || !canSendInActiveChannel}
+                  >
                     Send
                   </Button>
                 </div>
@@ -1203,6 +1240,15 @@ const ChatApp = () => {
           ) : null}
         </div>
       </Modal>
+
+      <GuildSettingsModal
+        open={settingsOpen}
+        guildId={route.mode === "guild" ? route.guildId : null}
+        canManageGuild={canManageGuild}
+        canManageRoles={canManageRoles}
+        channels={guildChannels}
+        onClose={() => setSettingsOpen(false)}
+      />
     </div>
   );
 };

@@ -4,6 +4,8 @@ import { eq } from "drizzle-orm";
 import { db } from "../db";
 import { channels, messageReads } from "../db/schema";
 import { badRequest, empty, forbidden, json, notFound, parseJson, requireAuth } from "../http";
+import { PermissionBits } from "../lib/permissions";
+import { hasChannelPermission, hasGuildPermission } from "../lib/permission-service";
 import {
   ID_REGEX,
   canAccessChannel,
@@ -13,7 +15,6 @@ import {
   emitToUsers,
   getDmMemberIds,
   getGuildMemberIds,
-  isGuildOwner,
   normalizeName,
   patchChannelSchema,
   readStateSchema,
@@ -46,8 +47,8 @@ export const patchChannel = async (request: BunRequest<"/api/channels/:channelId
   const updates: Partial<typeof channels.$inferInsert> = {};
 
   if (access.scope === "GUILD") {
-    if (!access.channel.guildId || !(await isGuildOwner(me.id, access.channel.guildId))) {
-      return forbidden(request, "Only the guild owner can update channels.");
+    if (!access.channel.guildId || !(await hasGuildPermission(me.id, access.channel.guildId, PermissionBits.MANAGE_CHANNELS))) {
+      return forbidden(request, "Missing MANAGE_CHANNELS.");
     }
 
     if (parsed.data.name !== undefined) {
@@ -119,8 +120,8 @@ export const deleteChannel = async (request: BunRequest<"/api/channels/:channelI
     return forbidden(request);
   }
 
-  if (!access.channel.guildId || !(await isGuildOwner(me.id, access.channel.guildId))) {
-    return forbidden(request, "Only the guild owner can delete channels.");
+  if (!access.channel.guildId || !(await hasGuildPermission(me.id, access.channel.guildId, PermissionBits.MANAGE_CHANNELS))) {
+    return forbidden(request, "Missing MANAGE_CHANNELS.");
   }
 
   const payload = toGuildChannelPayload(access.channel);
@@ -140,6 +141,16 @@ export const createTyping = async (request: BunRequest<"/api/channels/:channelId
   const channelId = request.params.channelId;
   if (!channelId) {
     return badRequest(request, "Invalid channel id.");
+  }
+
+  const canView = await hasChannelPermission(me.id, channelId, PermissionBits.VIEW_CHANNEL);
+  if (!canView) {
+    return forbidden(request);
+  }
+
+  const canSend = await hasChannelPermission(me.id, channelId, PermissionBits.SEND_MESSAGES);
+  if (!canSend) {
+    return forbidden(request, "Missing SEND_MESSAGES.");
   }
 
   const access = await canAccessChannel(me.id, channelId);
@@ -186,6 +197,11 @@ export const updateReadState = async (request: BunRequest<"/api/channels/:channe
   const channelId = request.params.channelId;
   if (!channelId) {
     return badRequest(request, "Invalid channel id.");
+  }
+
+  const canView = await hasChannelPermission(me.id, channelId, PermissionBits.VIEW_CHANNEL);
+  if (!canView) {
+    return forbidden(request);
   }
 
   const access = await canAccessChannel(me.id, channelId);

@@ -10,6 +10,11 @@ Implemented scope:
 - 1:1 DMs
 - Guilds (servers)
 - Guild categories + text channels
+- Guild roles + member role assignment
+- Guild/server settings update flow
+- Channel permission overwrites
+- Permission-aware route enforcement (guild + channel)
+- Sidebar category/channel drag-and-drop reorder + move
 - Invite create/preview/accept flow
 - Real-time dispatch for guild/channel/message lifecycle
 
@@ -129,12 +134,27 @@ All routes require authentication except Better Auth endpoints.
 - `POST /api/guilds`
 - `GET /api/users/@me/guilds`
 - `GET /api/guilds/:guildId`
+- `PATCH /api/guilds/:guildId`
 - `GET /api/guilds/:guildId/channels`
-- `POST /api/guilds/:guildId/channels` (owner only)
+- `POST /api/guilds/:guildId/channels`
+- `PATCH /api/guilds/:guildId/channels`
+- `GET /api/guilds/:guildId/members`
+- `GET /api/guilds/:guildId/permissions/@me`
+
+### Roles
+- `GET /api/guilds/:guildId/roles`
+- `POST /api/guilds/:guildId/roles`
+- `PATCH /api/guilds/:guildId/roles` (bulk reorder)
+- `PATCH /api/guilds/:guildId/roles/:roleId`
+- `DELETE /api/guilds/:guildId/roles/:roleId`
+- `PUT /api/guilds/:guildId/members/:userId/roles/:roleId`
+- `DELETE /api/guilds/:guildId/members/:userId/roles/:roleId`
 
 ### Channels
-- `PATCH /api/channels/:channelId` (guild owner for guild channels)
-- `DELETE /api/channels/:channelId` (guild owner for guild channels)
+- `PATCH /api/channels/:channelId`
+- `DELETE /api/channels/:channelId`
+- `PUT /api/channels/:channelId/permissions/:overwriteId`
+- `DELETE /api/channels/:channelId/permissions/:overwriteId`
 
 ### Messages
 - `GET /api/channels/:channelId/messages?limit=50&before=:messageId`
@@ -147,7 +167,7 @@ All routes require authentication except Better Auth endpoints.
 - `PUT /api/channels/:channelId/read`
 
 ### Invites
-- `POST /api/channels/:channelId/invites` (owner only)
+- `POST /api/channels/:channelId/invites`
 - `GET /api/invites/:code?with_counts=true|false`
 - `POST /api/invites/:code/accept`
 
@@ -171,6 +191,11 @@ Supported opcodes:
 Dispatch events:
 - `READY`
 - `GUILD_CREATE`
+- `GUILD_UPDATE`
+- `GUILD_ROLE_CREATE`
+- `GUILD_ROLE_UPDATE`
+- `GUILD_ROLE_DELETE`
+- `GUILD_MEMBER_UPDATE`
 - `CHANNEL_CREATE`
 - `CHANNEL_UPDATE`
 - `CHANNEL_DELETE`
@@ -191,7 +216,11 @@ READY behavior:
   - `type=1` DM
   - `type=0` guild text
   - `type=4` guild category
+- `guild_roles` table stores Discord-like role fields; `@everyone` is created per guild with `id=guild_id`.
+- `guild_member_roles` stores many-to-many member role assignments (with implicit `@everyone`).
+- `channel_permission_overwrites` stores per-channel role/member overwrites (`allow`/`deny` as stringified bitfields).
 - Guild access is enforced via `guild_members`.
 - DM access is enforced via `channel_members`.
+- Permission math uses `BigInt` with Discord-like overwrite ordering.
 - IDs are snowflake-like values serialized as strings.
 - Better Auth Drizzle mapping keys are snake_case (`auth_users`, `auth_sessions`, `auth_accounts`, `auth_verifications`).

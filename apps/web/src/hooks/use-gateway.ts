@@ -3,13 +3,15 @@ import type {
   GatewayPacket,
   GuildChannelPayload,
   GuildCreateEvent,
+  GuildMemberListItem,
+  GuildRole,
   MessagePayload,
   ReadyEvent,
 } from "@discord/types";
 import { useQueryClient } from "@tanstack/react-query";
 import type { InfiniteData } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
-import { api, type DmChannel, type Guild, type TypingEvent } from "@/lib/api";
+import { api, type DmChannel, type Guild, type Role, type TypingEvent } from "@/lib/api";
 import { GATEWAY_URL } from "@/lib/env";
 import { queryKeys } from "@/lib/query-keys";
 
@@ -279,7 +281,9 @@ export const useGateway = ({ enabled, userId, activeChannelId }: GatewayParams):
           case "CHANNEL_UPDATE": {
             const channel = packet.d as GuildChannelPayload;
             queryClient.setQueryData<GuildChannelPayload[]>(queryKeys.guildChannels(channel.guild_id), old =>
-              (old ?? []).map(item => (item.id === channel.id ? channel : item)),
+              (old ?? [])
+                .map(item => (item.id === channel.id ? channel : item))
+                .sort((a, b) => a.position - b.position || a.id.localeCompare(b.id)),
             );
             break;
           }
@@ -375,6 +379,54 @@ export const useGateway = ({ enabled, userId, activeChannelId }: GatewayParams):
                 ),
               );
             }
+            break;
+          }
+          case "GUILD_ROLE_CREATE":
+          case "GUILD_ROLE_UPDATE": {
+            const payload = packet.d as { guild_id: string; role: GuildRole };
+            queryClient.setQueryData<Role[]>(queryKeys.guildRoles(payload.guild_id), old => {
+              const existing = old ?? [];
+              const index = existing.findIndex(role => role.id === payload.role.id);
+              if (index === -1) {
+                return [...existing, payload.role].sort((a, b) => b.position - a.position || a.id.localeCompare(b.id));
+              }
+              const next = [...existing];
+              next[index] = payload.role;
+              return next.sort((a, b) => b.position - a.position || a.id.localeCompare(b.id));
+            });
+            break;
+          }
+          case "GUILD_ROLE_DELETE": {
+            const payload = packet.d as { guild_id: string; role_id: string };
+            queryClient.setQueryData<Role[]>(queryKeys.guildRoles(payload.guild_id), old =>
+              (old ?? []).filter(role => role.id !== payload.role_id),
+            );
+            break;
+          }
+          case "GUILD_MEMBER_UPDATE": {
+            const payload = packet.d as { guild_id: string; user: { id: string }; roles: string[] };
+            queryClient.setQueriesData<GuildMemberListItem[]>(
+              { queryKey: ["guild-members", payload.guild_id] },
+              old =>
+                (old ?? []).map(member =>
+                  member.user.id === payload.user.id ? { ...member, roles: payload.roles } : member,
+                ),
+            );
+            break;
+          }
+          case "GUILD_UPDATE": {
+            const guild = packet.d as Guild;
+            queryClient.setQueryData<Guild[]>(queryKeys.guilds, old => {
+              const existing = old ?? [];
+              const index = existing.findIndex(item => item.id === guild.id);
+              if (index === -1) {
+                return [...existing, guild].sort((a, b) => a.name.localeCompare(b.name));
+              }
+              const next = [...existing];
+              next[index] = guild;
+              return next;
+            });
+            queryClient.setQueryData<Guild>(queryKeys.guildSettings(guild.id), guild);
             break;
           }
           default:

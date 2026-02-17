@@ -4,13 +4,14 @@ import { and, eq } from "drizzle-orm";
 import { db } from "../db";
 import { channels, guildMembers, guilds, invites } from "../db/schema";
 import { badRequest, forbidden, json, notFound, parseJson, requireAuth } from "../http";
+import { PermissionBits } from "../lib/permissions";
+import { hasGuildPermission } from "../lib/permission-service";
 import {
   buildGuildCreateEvent,
   createInvite,
   createInviteSchema,
   emitToUsers,
   hydrateInvitePayload,
-  isGuildOwner,
   isInviteExpired,
 } from "../runtime";
 
@@ -33,9 +34,9 @@ export const createChannelInvite = async (
     return badRequest(request, "Invites can only be created for guild text channels.");
   }
 
-  const isOwner = await isGuildOwner(me.id, channel.guildId);
-  if (!isOwner) {
-    return forbidden(request, "Only the guild owner can create invites.");
+  const canManageChannels = await hasGuildPermission(me.id, channel.guildId, PermissionBits.MANAGE_CHANNELS);
+  if (!canManageChannels) {
+    return forbidden(request, "Missing MANAGE_CHANNELS.");
   }
 
   const body = (await parseJson<unknown>(request)) ?? {};

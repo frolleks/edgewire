@@ -1,6 +1,8 @@
 import type {
   DmChannelPayload,
   GuildChannelPayload,
+  GuildMemberListItem,
+  GuildRole,
   InvitePayload,
   MessagePayload,
   PartialGuild,
@@ -18,6 +20,8 @@ export type DmChannel = DmChannelPayload & {
 export type Guild = PartialGuild;
 export type GuildChannel = GuildChannelPayload;
 export type Invite = InvitePayload;
+export type Role = GuildRole;
+export type GuildMember = GuildMemberListItem;
 
 export type TypingEvent = {
   channel_id: string;
@@ -49,7 +53,35 @@ export const api = {
       body: JSON.stringify({ name }),
     }),
   getGuild: (guildId: string) => apiFetch<Guild>(`/api/guilds/${guildId}`),
+  getMyGuildPermissions: (guildId: string) =>
+    apiFetch<{ permissions: string; role_ids: string[] }>(`/api/guilds/${guildId}/permissions/@me`),
+  updateGuild: (
+    guildId: string,
+    payload: Partial<{
+      name: string;
+      icon: string | null;
+      verification_level: number;
+      default_message_notifications: number;
+      explicit_content_filter: number;
+      preferred_locale: string;
+      system_channel_id: string | null;
+      rules_channel_id: string | null;
+      public_updates_channel_id: string | null;
+    }>,
+  ) =>
+    apiFetch<Guild>(`/api/guilds/${guildId}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
   listGuildChannels: (guildId: string) => apiFetch<GuildChannel[]>(`/api/guilds/${guildId}/channels`),
+  reorderGuildChannels: (
+    guildId: string,
+    payload: Array<{ id: string; position: number; parent_id?: string | null; lock_permissions?: boolean }>,
+  ) =>
+    apiFetch<GuildChannel[]>(`/api/guilds/${guildId}/channels`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
   createGuildChannel: (
     guildId: string,
     payload: {
@@ -81,6 +113,65 @@ export const api = {
     apiFetch<void>(`/api/channels/${channelId}`, {
       method: "DELETE",
     }),
+  editChannelPermissionOverwrite: (
+    channelId: string,
+    overwriteId: string,
+    payload: { allow: string; deny: string; type: 0 | 1 },
+  ) =>
+    apiFetch<GuildChannel>(`/api/channels/${channelId}/permissions/${overwriteId}`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    }),
+  deleteChannelPermissionOverwrite: (channelId: string, overwriteId: string) =>
+    apiFetch<GuildChannel>(`/api/channels/${channelId}/permissions/${overwriteId}`, {
+      method: "DELETE",
+    }),
+
+  listGuildRoles: (guildId: string) => apiFetch<Role[]>(`/api/guilds/${guildId}/roles`),
+  createGuildRole: (
+    guildId: string,
+    payload?: Partial<Pick<Role, "name" | "permissions" | "color" | "hoist" | "mentionable">>,
+  ) =>
+    apiFetch<Role>(`/api/guilds/${guildId}/roles`, {
+      method: "POST",
+      body: JSON.stringify(payload ?? {}),
+    }),
+  reorderGuildRoles: (guildId: string, payload: Array<{ id: string; position: number }>) =>
+    apiFetch<Role[]>(`/api/guilds/${guildId}/roles`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+  updateGuildRole: (
+    guildId: string,
+    roleId: string,
+    payload: Partial<Pick<Role, "name" | "permissions" | "color" | "hoist" | "mentionable">>,
+  ) =>
+    apiFetch<Role>(`/api/guilds/${guildId}/roles/${roleId}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+  deleteGuildRole: (guildId: string, roleId: string) =>
+    apiFetch<void>(`/api/guilds/${guildId}/roles/${roleId}`, {
+      method: "DELETE",
+    }),
+
+  listGuildMembers: (guildId: string, params?: { limit?: number; offset?: number }) => {
+    const query = new URLSearchParams();
+    if (params?.limit !== undefined) query.set("limit", String(params.limit));
+    if (params?.offset !== undefined) query.set("offset", String(params.offset));
+    const suffix = query.toString();
+    return apiFetch<GuildMember[]>(`/api/guilds/${guildId}/members${suffix ? `?${suffix}` : ""}`);
+  },
+  addGuildMemberRole: (guildId: string, userId: string, roleId: string) =>
+    apiFetch<{ guild_id: string; user_id: string; role_id: string }>(
+      `/api/guilds/${guildId}/members/${userId}/roles/${roleId}`,
+      { method: "PUT" },
+    ),
+  removeGuildMemberRole: (guildId: string, userId: string, roleId: string) =>
+    apiFetch<{ guild_id: string; user_id: string; role_id: string }>(
+      `/api/guilds/${guildId}/members/${userId}/roles/${roleId}`,
+      { method: "DELETE" },
+    ),
 
   listMessages: (channelId: string, before?: string, limit = 50) => {
     const params = new URLSearchParams();

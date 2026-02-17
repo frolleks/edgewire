@@ -35,6 +35,13 @@ This repository is a minimal Discord-like 1:1 DM clone with a Bun backend and Re
 - Route handlers are split by domain in `apps/server/src/controllers/*`.
 - Shared HTTP helpers for CORS/preflight/JSON/auth guards live in `apps/server/src/http/index.ts`.
 - Shared server runtime/business logic used by controllers + gateway lives in `apps/server/src/runtime.ts`.
+- Permissions use Discord-like bitfields stored as strings and evaluated via BigInt (`apps/server/src/lib/permissions.ts` + `apps/server/src/lib/permission-service.ts`).
+- Guild role + member-role + channel-overwrite persistence is in:
+  - `guild_roles`
+  - `guild_member_roles`
+  - `channel_permission_overwrites`
+- `@everyone` role is created automatically for each guild with `role.id === guild.id`.
+- New REST surface includes guild settings patch, role CRUD/reorder, member role assignment, channel overwrite edit/delete, and bulk channel reorder.
 - `fetch(req, server)` in `apps/server/src/index.ts` is reserved for WebSocket upgrades (`/gateway`, `/api/gateway`) and non-route fallbacks.
 - Gateway endpoint is `/gateway` (also `/api/gateway`).
 - Gateway token is minted via `POST /api/gateway/token`.
@@ -45,9 +52,15 @@ This repository is a minimal Discord-like 1:1 DM clone with a Bun backend and Re
   - `/login`
   - `/register`
   - `/app`
-  - `/app/channels/:channelId`
+  - `/app/channels/@me`
+  - `/app/channels/@me/:channelId`
+  - `/app/channels/:guildId`
+  - `/app/channels/:guildId/:channelId`
 - WebSocket flow follows HELLO -> HEARTBEAT loop -> IDENTIFY.
 - Gateway dispatch events update React Query caches.
+- Guild channel sidebar uses `dnd-kit` (`apps/web/src/components/guild-channel-tree.tsx`) for category/channel reorder and parent moves.
+- Server settings UI is in `apps/web/src/components/guild-settings-modal.tsx` (Overview, Roles, Members).
+- Permission-aware frontend helpers live in `apps/web/src/lib/permissions.ts`.
 
 ## Drizzle/Better Auth Schema Mapping
 - Better Auth `modelName` values are snake_case table names.
