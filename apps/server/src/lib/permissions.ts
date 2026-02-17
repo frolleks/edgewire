@@ -1,6 +1,7 @@
 export const PermissionBits = {
   VIEW_CHANNEL: 1n << 10n,
   SEND_MESSAGES: 1n << 11n,
+  MANAGE_MESSAGES: 1n << 13n,
   MANAGE_CHANNELS: 1n << 4n,
   MANAGE_GUILD: 1n << 5n,
   READ_MESSAGE_HISTORY: 1n << 16n,

@@ -316,11 +316,6 @@ export const deleteChannelMessage = async (
     return forbidden(request);
   }
 
-  const canSend = await hasChannelPermission(me.id, channelId, PermissionBits.SEND_MESSAGES);
-  if (!canSend) {
-    return forbidden(request, "Missing SEND_MESSAGES.");
-  }
-
   const access = await canAccessChannel(me.id, channelId);
   if (!access) {
     return forbidden(request);
@@ -335,7 +330,19 @@ export const deleteChannelMessage = async (
   }
 
   if (message.authorId !== me.id) {
-    return forbidden(request, "Only the author can modify this message.");
+    if (access.scope === "DM") {
+      return forbidden(request, "Only the author can modify this message.");
+    }
+
+    const canManageMessages = await hasChannelPermission(
+      me.id,
+      channelId,
+      PermissionBits.MANAGE_MESSAGES,
+    );
+
+    if (!canManageMessages) {
+      return forbidden(request, "Missing MANAGE_MESSAGES.");
+    }
   }
 
   await db.delete(messages).where(and(eq(messages.id, messageId), eq(messages.channelId, channelId)));
@@ -343,6 +350,7 @@ export const deleteChannelMessage = async (
   await emitToChannelAudience(access.channel, "MESSAGE_DELETE", {
     id: messageId,
     channel_id: channelId,
+    guild_id: access.channel.guildId ?? null,
   });
   return empty(request, 204);
 };

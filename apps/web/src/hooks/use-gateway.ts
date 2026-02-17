@@ -355,19 +355,26 @@ export const useGateway = ({ enabled, userId, activeChannelId }: GatewayParams):
             break;
           }
           case "MESSAGE_DELETE": {
-            const payload = packet.d as { id: string; channel_id: string };
+            const payload = packet.d as {
+              id: string;
+              channel_id: string;
+              guild_id?: string | null;
+            };
             queryClient.setQueryData<InfiniteData<MessagePayload[]>>(
               queryKeys.messages(payload.channel_id),
               old => deleteMessage(old, payload.id),
             );
 
-            queryClient.setQueryData<DmChannel[]>(queryKeys.dmChannels, old =>
-              (old ?? []).map(channel =>
-                channel.last_message_id === payload.id
-                  ? { ...channel, last_message: null, last_message_id: null }
-                  : channel,
-              ),
+            const dmChannels = queryClient.getQueryData<DmChannel[]>(queryKeys.dmChannels) ?? [];
+            const deletedWasDmPreview = dmChannels.some(
+              channel =>
+                channel.id === payload.channel_id &&
+                channel.last_message_id === payload.id,
             );
+
+            if (deletedWasDmPreview) {
+              void queryClient.invalidateQueries({ queryKey: queryKeys.dmChannels });
+            }
             break;
           }
           case "TYPING_START": {
