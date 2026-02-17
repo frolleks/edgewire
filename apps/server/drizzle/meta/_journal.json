@@ -8,6 +8,13 @@
       "when": 1771253980233,
       "tag": "0000_little_hellcat",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1771288840572,
+      "tag": "0001_guilds",
+      "breakpoints": true
     }
   ]
 }

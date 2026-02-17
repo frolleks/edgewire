@@ -1,8 +1,15 @@
-import type { GatewayPacket, MessagePayload } from "@discord/types";
+import type {
+  DmChannelPayload,
+  GatewayPacket,
+  GuildChannelPayload,
+  GuildCreateEvent,
+  MessagePayload,
+  ReadyEvent,
+} from "@discord/types";
 import { useQueryClient } from "@tanstack/react-query";
 import type { InfiniteData } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
-import { api, type DmChannel, type TypingEvent } from "@/lib/api";
+import { api, type DmChannel, type Guild, type TypingEvent } from "@/lib/api";
 import { GATEWAY_URL } from "@/lib/env";
 import { queryKeys } from "@/lib/query-keys";
 
@@ -43,9 +50,7 @@ const updateMessage = (
 
   return {
     ...current,
-    pages: current.pages.map(page =>
-      page.map(item => (item.id === message.id ? message : item)),
-    ),
+    pages: current.pages.map(page => page.map(item => (item.id === message.id ? message : item))),
   };
 };
 
@@ -62,6 +67,11 @@ const deleteMessage = (
     pages: current.pages.map(page => page.filter(item => item.id !== messageId)),
   };
 };
+
+const ensureDmChannel = (input: DmChannelPayload): DmChannel => ({
+  ...input,
+  unread: Boolean(input.unread),
+});
 
 export const useGateway = ({ enabled, userId, activeChannelId }: GatewayParams): void => {
   const queryClient = useQueryClient();
@@ -166,9 +176,7 @@ export const useGateway = ({ enabled, userId, activeChannelId }: GatewayParams):
 
         if (packet.op === 10) {
           const heartbeatInterval =
-            typeof packet.d === "object" &&
-            packet.d !== null &&
-            "heartbeat_interval" in packet.d
+            typeof packet.d === "object" && packet.d !== null && "heartbeat_interval" in packet.d
               ? Number((packet.d as { heartbeat_interval: number }).heartbeat_interval)
               : 25_000;
 
@@ -211,21 +219,76 @@ export const useGateway = ({ enabled, userId, activeChannelId }: GatewayParams):
 
         switch (packet.t) {
           case "READY": {
-            if (packet.d && typeof packet.d === "object" && "private_channels" in packet.d) {
-              const channels = (packet.d as { private_channels: DmChannel[] }).private_channels;
-              queryClient.setQueryData(queryKeys.channels, channels);
-            }
+            const ready = packet.d as ReadyEvent;
+            queryClient.setQueryData<DmChannel[]>(
+              queryKeys.dmChannels,
+              ready.private_channels.map(channel => ensureDmChannel(channel)),
+            );
+            break;
+          }
+          case "GUILD_CREATE": {
+            const guildPayload = packet.d as GuildCreateEvent;
+            const guild: Guild = {
+              id: guildPayload.id,
+              name: guildPayload.name,
+              icon: guildPayload.icon,
+              owner_id: guildPayload.owner_id,
+            };
+
+            queryClient.setQueryData<Guild[]>(queryKeys.guilds, old => {
+              const existing = old ?? [];
+              const index = existing.findIndex(item => item.id === guild.id);
+              if (index === -1) {
+                return [...existing, guild].sort((a, b) => a.name.localeCompare(b.name));
+              }
+
+              const next = [...existing];
+              next[index] = guild;
+              return next;
+            });
+
+            queryClient.setQueryData<GuildChannelPayload[]>(
+              queryKeys.guildChannels(guild.id),
+              guildPayload.channels,
+            );
             break;
           }
           case "CHANNEL_CREATE": {
-            const channel = packet.d as DmChannel;
-            queryClient.setQueryData<DmChannel[]>(queryKeys.channels, old => {
-              const existing = old ?? [];
-              if (existing.some(item => item.id === channel.id)) {
-                return existing;
-              }
-              return [{ ...channel, unread: Boolean(channel.unread) }, ...existing];
-            });
+            const channel = packet.d as DmChannelPayload | GuildChannelPayload;
+            if ((channel as GuildChannelPayload).guild_id) {
+              const guildChannel = channel as GuildChannelPayload;
+              queryClient.setQueryData<GuildChannelPayload[]>(queryKeys.guildChannels(guildChannel.guild_id), old => {
+                const existing = old ?? [];
+                if (existing.some(item => item.id === guildChannel.id)) {
+                  return existing;
+                }
+                return [...existing, guildChannel].sort((a, b) => a.position - b.position || a.id.localeCompare(b.id));
+              });
+            } else {
+              const dmChannel = ensureDmChannel(channel as DmChannelPayload);
+              queryClient.setQueryData<DmChannel[]>(queryKeys.dmChannels, old => {
+                const existing = old ?? [];
+                if (existing.some(item => item.id === dmChannel.id)) {
+                  return existing;
+                }
+                return [dmChannel, ...existing];
+              });
+            }
+            break;
+          }
+          case "CHANNEL_UPDATE": {
+            const channel = packet.d as GuildChannelPayload;
+            queryClient.setQueryData<GuildChannelPayload[]>(queryKeys.guildChannels(channel.guild_id), old =>
+              (old ?? []).map(item => (item.id === channel.id ? channel : item)),
+            );
+            break;
+          }
+          case "CHANNEL_DELETE": {
+            const channel = packet.d as GuildChannelPayload;
+            queryClient.setQueryData<GuildChannelPayload[]>(queryKeys.guildChannels(channel.guild_id), old =>
+              (old ?? []).filter(item => item.id !== channel.id),
+            );
+            queryClient.removeQueries({ queryKey: queryKeys.messages(channel.id) });
             break;
           }
           case "MESSAGE_CREATE": {
@@ -235,30 +298,31 @@ export const useGateway = ({ enabled, userId, activeChannelId }: GatewayParams):
               old => insertNewestMessage(old, message),
             );
 
-            queryClient.setQueryData<DmChannel[]>(queryKeys.channels, old => {
-              const channels = old ?? [];
-              const index = channels.findIndex(channel => channel.id === message.channel_id);
-              if (index === -1) {
-                return channels;
-              }
+            if (message.guild_id === null) {
+              queryClient.setQueryData<DmChannel[]>(queryKeys.dmChannels, old => {
+                const channels = old ?? [];
+                const index = channels.findIndex(channel => channel.id === message.channel_id);
+                if (index === -1) {
+                  return channels;
+                }
 
-              const next = [...channels];
-              const channel = next[index];
-              if (!channel) {
-                return channels;
-              }
-              const unread =
-                message.author.id !== userId &&
-                activeChannelId !== message.channel_id;
-              const updatedChannel: DmChannel = {
-                ...channel,
-                last_message: message,
-                last_message_id: message.id,
-                unread,
-              };
+                const next = [...channels];
+                const channel = next[index];
+                if (!channel) {
+                  return channels;
+                }
 
-              return [updatedChannel, ...next.filter((_, i) => i !== index)];
-            });
+                const unread = message.author.id !== userId && activeChannelId !== message.channel_id;
+                const updated: DmChannel = {
+                  ...channel,
+                  last_message: message,
+                  last_message_id: message.id,
+                  unread,
+                };
+
+                return [updated, ...next.filter((_, i) => i !== index)];
+              });
+            }
             break;
           }
           case "MESSAGE_UPDATE": {
@@ -267,13 +331,14 @@ export const useGateway = ({ enabled, userId, activeChannelId }: GatewayParams):
               queryKeys.messages(message.channel_id),
               old => updateMessage(old, message),
             );
-            queryClient.setQueryData<DmChannel[]>(queryKeys.channels, old =>
-              (old ?? []).map(channel =>
-                channel.last_message_id === message.id
-                  ? { ...channel, last_message: message }
-                  : channel,
-              ),
-            );
+
+            if (message.guild_id === null) {
+              queryClient.setQueryData<DmChannel[]>(queryKeys.dmChannels, old =>
+                (old ?? []).map(channel =>
+                  channel.last_message_id === message.id ? { ...channel, last_message: message } : channel,
+                ),
+              );
+            }
             break;
           }
           case "MESSAGE_DELETE": {
@@ -282,7 +347,8 @@ export const useGateway = ({ enabled, userId, activeChannelId }: GatewayParams):
               queryKeys.messages(payload.channel_id),
               old => deleteMessage(old, payload.id),
             );
-            queryClient.setQueryData<DmChannel[]>(queryKeys.channels, old =>
+
+            queryClient.setQueryData<DmChannel[]>(queryKeys.dmChannels, old =>
               (old ?? []).map(channel =>
                 channel.last_message_id === payload.id
                   ? { ...channel, last_message: null, last_message_id: null }
@@ -301,8 +367,9 @@ export const useGateway = ({ enabled, userId, activeChannelId }: GatewayParams):
               user_id: string;
               last_read_message_id: string | null;
             };
+
             if (payload.user_id === userId) {
-              queryClient.setQueryData<DmChannel[]>(queryKeys.channels, old =>
+              queryClient.setQueryData<DmChannel[]>(queryKeys.dmChannels, old =>
                 (old ?? []).map(channel =>
                   channel.id === payload.channel_id ? { ...channel, unread: false } : channel,
                 ),

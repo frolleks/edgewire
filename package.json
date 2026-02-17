@@ -15,6 +15,7 @@
     "start": "bun run start:server",
     "start:server": "bun --filter @discord/server start",
     "start:web": "bun --filter @discord/web start",
+    "smoke": "bun --filter @discord/server smoke",
     "db:generate": "bun --filter @discord/server db:generate",
     "db:migrate": "bun --filter @discord/server db:migrate",
     "db:studio": "bun --filter @discord/server db:studio",
