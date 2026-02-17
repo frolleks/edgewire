@@ -24,6 +24,25 @@ type MessageListProps = {
   bottomRef: RefObject<HTMLDivElement | null>;
 };
 
+const MESSAGE_GROUP_WINDOW_MS = 7 * 60 * 1000;
+
+const shouldGroupWithPreviousMessage = (
+  previous: MessagePayload | undefined,
+  current: MessagePayload,
+): boolean => {
+  if (!previous || previous.author.id !== current.author.id) {
+    return false;
+  }
+
+  const previousTimestamp = Date.parse(previous.timestamp);
+  const currentTimestamp = Date.parse(current.timestamp);
+  if (Number.isNaN(previousTimestamp) || Number.isNaN(currentTimestamp)) {
+    return false;
+  }
+
+  return currentTimestamp - previousTimestamp <= MESSAGE_GROUP_WINDOW_MS;
+};
+
 export function MessageList({
   messages,
   compactMode,
@@ -48,9 +67,9 @@ export function MessageList({
     <section className="flex-1 min-h-0 overflow-hidden">
       <div
         ref={containerRef}
-        className="h-full min-h-0 overflow-y-auto bg-card px-4 pt-4 pb-1"
+        className="h-full min-h-0 overflow-y-auto bg-card px-0 pt-4 pb-0"
       >
-        <div className="space-y-4">
+        <div>
           <div className="flex justify-center">
             <Button
               variant="outline"
@@ -62,24 +81,33 @@ export function MessageList({
             </Button>
           </div>
 
-          {messages.map((message) => (
-            <MessageItem
-              key={message.id}
-              message={message}
-              compactMode={compactMode}
-              showTimestamps={showTimestamps}
-              localePreference={localePreference}
-              routeMode={routeMode}
-              currentUserId={currentUserId}
-              currentUserRoleIds={currentUserRoleIds}
-              guildRoles={guildRoles}
-              guildChannels={guildChannels}
-              activeGuildChannelPermissions={activeGuildChannelPermissions}
-              isDeleting={deletingMessageIds.includes(message.id)}
-              onOpenProfile={onOpenProfile}
-              onDeleteMessage={onDeleteMessage}
-            />
-          ))}
+          {messages.map((message, index) => {
+            const previousMessage = index > 0 ? messages[index - 1] : undefined;
+            const groupedWithPrevious = shouldGroupWithPreviousMessage(previousMessage, message);
+            return (
+              <div
+                key={message.id}
+                className={`${groupedWithPrevious ? "mt-0" : index === 0 ? "mt-0" : "mt-3"} mx-2`}
+              >
+                <MessageItem
+                  message={message}
+                  groupedWithPrevious={groupedWithPrevious}
+                  compactMode={compactMode}
+                  showTimestamps={showTimestamps}
+                  localePreference={localePreference}
+                  routeMode={routeMode}
+                  currentUserId={currentUserId}
+                  currentUserRoleIds={currentUserRoleIds}
+                  guildRoles={guildRoles}
+                  guildChannels={guildChannels}
+                  activeGuildChannelPermissions={activeGuildChannelPermissions}
+                  isDeleting={deletingMessageIds.includes(message.id)}
+                  onOpenProfile={onOpenProfile}
+                  onDeleteMessage={onDeleteMessage}
+                />
+              </div>
+            );
+          })}
         </div>
         <div ref={bottomRef} className="h-0" />
       </div>

@@ -1,4 +1,9 @@
-import type { GuildChannelPayload, GuildRole, MessagePayload, UserSummary } from "@discord/types";
+import type {
+  GuildChannelPayload,
+  GuildRole,
+  MessagePayload,
+  UserSummary,
+} from "@discord/types";
 import { Trash2 } from "lucide-react";
 import { useMemo } from "react";
 import AttachmentList from "@/components/chat/attachments/attachment-list";
@@ -9,6 +14,7 @@ import { PermissionBits, hasPermission } from "@/lib/permissions";
 
 type MessageItemProps = {
   message: MessagePayload;
+  groupedWithPrevious: boolean;
   compactMode: boolean;
   showTimestamps: boolean;
   localePreference?: string;
@@ -23,13 +29,15 @@ type MessageItemProps = {
   onDeleteMessage: (messageId: string) => void;
 };
 
-const MESSAGE_MENTION_TOKEN_REGEX = /<@!?[^\s>]+>|<@&[^\s>]+>|<#[^\s>]+>|\B@(?:everyone|here)\b/g;
+const MESSAGE_MENTION_TOKEN_REGEX =
+  /<@!?[^\s>]+>|<@&[^\s>]+>|<#[^\s>]+>|\B@(?:everyone|here)\b/g;
 const USER_MENTION_TOKEN_REGEX = /^<@!?([^\s>]+)>$/;
 const ROLE_MENTION_TOKEN_REGEX = /^<@&([^\s>]+)>$/;
 const CHANNEL_MENTION_TOKEN_REGEX = /^<#([^\s>]+)>$/;
 
 export function MessageItem({
   message,
+  groupedWithPrevious,
   compactMode,
   showTimestamps,
   localePreference,
@@ -43,7 +51,9 @@ export function MessageItem({
   onOpenProfile,
   onDeleteMessage,
 }: MessageItemProps) {
-  const isOwnMessage = Boolean(currentUserId && message.author.id === currentUserId);
+  const isOwnMessage = Boolean(
+    currentUserId && message.author.id === currentUserId,
+  );
   const canDeleteMessage =
     currentUserId !== null &&
     (routeMode === "dm"
@@ -55,9 +65,11 @@ export function MessageItem({
         ));
   const mentionsMe = Boolean(
     currentUserId &&
-      (message.mentions.some((user) => user.id === currentUserId) ||
-        message.mention_roles.some((roleId) => currentUserRoleIds.includes(roleId)) ||
-        message.mention_everyone),
+    (message.mentions.some((user) => user.id === currentUserId) ||
+      message.mention_roles.some((roleId) =>
+        currentUserRoleIds.includes(roleId),
+      ) ||
+      message.mention_everyone),
   );
 
   const mentionUserById = useMemo(
@@ -69,7 +81,8 @@ export function MessageItem({
     [guildRoles],
   );
   const channelMentionById = useMemo(
-    () => new Map(message.mention_channels.map((channel) => [channel.id, channel])),
+    () =>
+      new Map(message.mention_channels.map((channel) => [channel.id, channel])),
     [message.mention_channels],
   );
   const guildChannelById = useMemo(
@@ -113,9 +126,10 @@ export function MessageItem({
       if (roleMatch) {
         const roleId = roleMatch[1];
         const role = roleId ? roleById.get(roleId) : undefined;
-        const roleColor = role?.color === null || role?.color === undefined
-          ? undefined
-          : `#${role.color.toString(16).padStart(6, "0")}`;
+        const roleColor =
+          role?.color === null || role?.color === undefined
+            ? undefined
+            : `#${role.color.toString(16).padStart(6, "0")}`;
         nodes.push(
           <MentionToken
             key={`${message.id}:${index}:role:${roleId ?? "unknown"}`}
@@ -130,8 +144,12 @@ export function MessageItem({
       const channelMatch = token.match(CHANNEL_MENTION_TOKEN_REGEX);
       if (channelMatch) {
         const channelId = channelMatch[1];
-        const channelMention = channelId ? channelMentionById.get(channelId) : undefined;
-        const guildChannel = channelId ? guildChannelById.get(channelId) : undefined;
+        const channelMention = channelId
+          ? channelMentionById.get(channelId)
+          : undefined;
+        const guildChannel = channelId
+          ? guildChannelById.get(channelId)
+          : undefined;
         const channelName = channelMention?.name ?? guildChannel?.name ?? null;
 
         nodes.push(
@@ -159,53 +177,82 @@ export function MessageItem({
     }
 
     return nodes;
-  }, [guildChannelById, mentionUserById, channelMentionById, roleById, message.content, message.id, onOpenProfile]);
+  }, [
+    guildChannelById,
+    mentionUserById,
+    channelMentionById,
+    roleById,
+    message.content,
+    message.id,
+    onOpenProfile,
+  ]);
 
   return (
     <article
-      className={`group relative flex ${compactMode ? "gap-2 py-1" : "gap-3"} ${
-        mentionsMe ? "rounded-md border-l-2 border-primary/80 bg-accent/30 pl-2 pr-1" : ""
+      className={`group relative flex ${compactMode ? "gap-2" : "gap-3"} ${
+        groupedWithPrevious ? "py-px" : compactMode ? "py-1" : "py-2"
+      } px-2 transition-colors hover:bg-accent/50 ${
+        mentionsMe ? "border-l-2 border-primary/80 bg-accent/30" : ""
       }`}
     >
-      <button
-        type="button"
-        onClick={() => onOpenProfile(message.author)}
-        className={`${compactMode ? "h-7 w-7" : "h-9 w-9"} shrink-0 overflow-hidden rounded-full bg-muted grid place-items-center text-xs font-semibold uppercase`}
-        aria-label={`Open profile for ${message.author.display_name}`}
-      >
-        {message.author.avatar_url ? (
-          <img
-            src={message.author.avatar_url}
-            alt={`${message.author.display_name} avatar`}
-            className="h-full w-full object-cover"
-          />
-        ) : (
-          getDisplayInitial(message.author.display_name)
-        )}
-      </button>
-      <div className="relative min-w-0 flex-1 pr-12">
-        <div className="flex items-center gap-2">
-          <span className={`font-semibold ${compactMode ? "text-xs" : "text-sm"}`}>
-            {message.author.display_name}
-          </span>
+      {groupedWithPrevious ? (
+        <div
+          className={`${compactMode ? "w-9" : "w-11"} relative shrink-0 select-none text-right`}
+          aria-hidden
+        >
           {showTimestamps ? (
-            <span className="text-xs">
+            <span className="absolute right-0 top-0 text-[10px] text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
               {formatTime(message.timestamp, localePreference)}
             </span>
           ) : null}
-          {message.edited_timestamp ? (
-            <span className="text-[10px]">(edited)</span>
-          ) : null}
         </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => onOpenProfile(message.author)}
+          className={`${compactMode ? "h-7 w-7" : "h-9 w-9"} shrink-0 overflow-hidden rounded-full bg-muted grid place-items-center text-xs font-semibold uppercase`}
+          aria-label={`Open profile for ${message.author.display_name}`}
+        >
+          {message.author.avatar_url ? (
+            <img
+              src={message.author.avatar_url}
+              alt={`${message.author.display_name} avatar`}
+              className="h-full w-full object-cover"
+            />
+          ) : (
+            getDisplayInitial(message.author.display_name)
+          )}
+        </button>
+      )}
+      <div className="relative min-w-0 flex-1">
+        {!groupedWithPrevious ? (
+          <div className="flex items-center gap-2">
+            <span
+              className={`font-semibold ${compactMode ? "text-xs" : "text-sm"}`}
+            >
+              {message.author.display_name}
+            </span>
+            {showTimestamps ? (
+              <span className="text-xs">
+                {formatTime(message.timestamp, localePreference)}
+              </span>
+            ) : null}
+            {message.edited_timestamp ? (
+              <span className="text-[10px]">(edited)</span>
+            ) : null}
+          </div>
+        ) : null}
         {renderedContent ? (
-          <p className={`whitespace-pre-wrap break-words mt-1 ${compactMode ? "text-xs" : "text-sm"}`}>
+          <p
+            className={`whitespace-pre-wrap break-words ${groupedWithPrevious ? "" : "mt-1"} ${compactMode ? "text-xs" : "text-sm"}`}
+          >
             {renderedContent}
           </p>
         ) : null}
         <AttachmentList attachments={message.attachments} />
 
         {canDeleteMessage ? (
-          <div className="pointer-events-none absolute right-0 top-0 z-10 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+          <div className="pointer-events-none absolute -right-1 top-0 z-10 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
             <div className="pointer-events-auto rounded-md border bg-card shadow-sm">
               <Button
                 type="button"
