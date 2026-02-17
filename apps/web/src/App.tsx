@@ -13,7 +13,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import type { InfiniteData } from "@tanstack/react-query";
-import { Home, Paperclip, Plus, X } from "lucide-react";
+import { Cog, Home, Paperclip, Plus, X } from "lucide-react";
 import {
   type ChangeEvent,
   type FormEvent,
@@ -1258,12 +1258,6 @@ const ChatApp = () => {
     api.triggerTyping(activeMessageChannelId).catch(() => undefined);
   };
 
-  const signOut = async (): Promise<void> => {
-    await authClient.signOut();
-    queryClient.clear();
-    navigate("/login", { replace: true });
-  };
-
   const openProfile = (user: UserSummary): void => {
     setProfileDialog({
       user,
@@ -1529,13 +1523,12 @@ const ChatApp = () => {
             <div className="flex items-center gap-1">
               <Button
                 variant="outline"
-                size="sm"
+                size="icon-sm"
                 onClick={() => navigate("/settings/account")}
+                aria-label="Open user settings"
+                title="User Settings"
               >
-                User Settings
-              </Button>
-              <Button variant="secondary" size="sm" onClick={signOut}>
-                Sign out
+                <Cog className="size-4" />
               </Button>
             </div>
           </div>

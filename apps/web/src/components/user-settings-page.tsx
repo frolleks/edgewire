@@ -2,7 +2,8 @@ import type { MessagePayload, UserSummary } from "@discord/types";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { InfiniteData } from "@tanstack/react-query";
 import { type ChangeEvent, useEffect, useMemo, useState } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { ArrowLeft } from "lucide-react";
+import { Navigate, useLocation, useNavigate } from "react-router-dom";
 import { z } from "zod";
 import { toast } from "sonner";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -452,6 +453,14 @@ export default function UserSettingsPage() {
     navigate("/login", { replace: true });
   };
 
+  const onBack = (): void => {
+    if (window.history.length > 1) {
+      navigate(-1);
+      return;
+    }
+    navigate("/app/channels/@me", { replace: true });
+  };
+
   if (activeSection === null) {
     return null;
   }
@@ -888,6 +897,11 @@ export default function UserSettingsPage() {
     <div className="min-h-screen bg-background">
       <div className="mx-auto flex w-full max-w-7xl gap-0 px-3 py-6 sm:px-6 lg:px-8">
         <aside className="w-64 shrink-0 border-r pr-4">
+          <Button variant="ghost" className="mb-3 w-full justify-start" onClick={onBack}>
+            <ArrowLeft className="size-4" />
+            Back
+          </Button>
+
           <div className="space-y-1">
             {sections.map(section => (
               <Button
@@ -903,7 +917,7 @@ export default function UserSettingsPage() {
 
           <div className="mt-6 border-t pt-4">
             <Button variant="destructive" className="w-full justify-start" onClick={() => onSignOut().catch(() => undefined)}>
-              Log Out
+              Sign out
             </Button>
           </div>
         </aside>
