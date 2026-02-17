@@ -1,10 +1,14 @@
 import type {
+  BadgesPayload,
+  ChannelBadgePayload,
   DmChannelPayload,
+  GuildBadgePayload,
   GuildChannelPayload,
   GuildMemberListItem,
   GuildRole,
   InvitePayload,
   MessagePayload,
+  NotificationLevel,
   PartialGuild,
   UserSummary,
 } from "@discord/types";
@@ -17,6 +21,9 @@ export type CurrentUserSettings = {
   compact_mode: boolean;
   show_timestamps: boolean;
   locale: string | null;
+  enable_desktop_notifications: boolean;
+  notification_sounds: boolean;
+  default_guild_notification_level: NotificationLevel;
 };
 
 export type CurrentUser = UserSummary & {
@@ -53,6 +60,10 @@ export type TypingEvent = {
   user_id: string;
   timestamp: number;
 };
+
+export type ChannelBadge = ChannelBadgePayload;
+export type GuildBadge = GuildBadgePayload;
+export type BadgesResponse = BadgesPayload;
 
 export type UploadInitResponse = {
   upload_id: string;
@@ -97,6 +108,45 @@ export const api = {
     }),
   updateSettings: (body: Partial<CurrentUserSettings>) =>
     apiFetch<CurrentUserSettings>("/api/users/@me/settings", {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  getBadges: () => apiFetch<BadgesResponse>("/api/badges"),
+  patchGuildNotificationSettings: (
+    guildId: string,
+    body: Partial<{
+      level: NotificationLevel;
+      suppress_everyone: boolean;
+      muted: boolean;
+      muted_until: string | null;
+    }>,
+  ) =>
+    apiFetch<{
+      user_id: string;
+      guild_id: string;
+      level: NotificationLevel;
+      suppress_everyone: boolean;
+      muted: boolean;
+      muted_until: string | null;
+    }>(`/api/guilds/${guildId}/notification-settings`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  patchChannelNotificationSettings: (
+    channelId: string,
+    body: Partial<{
+      level: NotificationLevel | null;
+      muted: boolean;
+      muted_until: string | null;
+    }>,
+  ) =>
+    apiFetch<{
+      user_id: string;
+      channel_id: string;
+      level: NotificationLevel | null;
+      muted: boolean;
+      muted_until: string | null;
+    }>(`/api/channels/${channelId}/notification-settings`, {
       method: "PATCH",
       body: JSON.stringify(body),
     }),
@@ -266,6 +316,11 @@ export const api = {
     payload: {
       content?: string;
       attachment_upload_ids?: string[];
+      allowed_mentions?: {
+        parse?: Array<"users" | "roles" | "everyone">;
+        users?: string[];
+        roles?: string[];
+      };
     },
   ) =>
     apiFetch<MessagePayload>(`/api/channels/${channelId}/messages`, {

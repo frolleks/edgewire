@@ -31,6 +31,7 @@ import {
   getChannelMessages,
   updateChannelMessage,
 } from "./controllers/messages";
+import { getBadges, patchChannelNotificationSettings, patchGuildNotificationSettings } from "./controllers/notifications";
 import { deleteChannelPermissionOverwrite, editChannelPermissionOverwrite } from "./controllers/overwrites";
 import {
   addMemberRole,
@@ -134,6 +135,14 @@ export const routes = {
     PATCH: auth404,
     OPTIONS: corsPreflight,
   },
+  "/api/badges": {
+    GET: safe(getBadges),
+    POST: auth404,
+    PUT: auth404,
+    PATCH: auth404,
+    DELETE: auth404,
+    OPTIONS: corsPreflight,
+  },
   "/api/guilds": {
     POST: safe(createGuild),
     GET: auth404,
@@ -206,6 +215,14 @@ export const routes = {
     PATCH: auth404,
     OPTIONS: corsPreflight,
   },
+  "/api/guilds/:guildId/notification-settings": {
+    PATCH: safe(patchGuildNotificationSettings as Handler),
+    GET: auth404,
+    POST: auth404,
+    PUT: auth404,
+    DELETE: auth404,
+    OPTIONS: corsPreflight,
+  },
   "/api/channels/:channelId": {
     PATCH: safe(patchChannel as Handler),
     DELETE: safe(deleteChannel as Handler),
@@ -228,6 +245,14 @@ export const routes = {
     GET: notAllowed(["PATCH", "DELETE"]),
     POST: notAllowed(["PATCH", "DELETE"]),
     PUT: notAllowed(["PATCH", "DELETE"]),
+    OPTIONS: corsPreflight,
+  },
+  "/api/channels/:channelId/notification-settings": {
+    PATCH: safe(patchChannelNotificationSettings as Handler),
+    GET: auth404,
+    POST: auth404,
+    PUT: auth404,
+    DELETE: auth404,
     OPTIONS: corsPreflight,
   },
   "/api/channels/:channelId/typing": {

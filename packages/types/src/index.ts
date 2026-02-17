@@ -20,6 +20,15 @@ export interface ChannelPermissionOverwrite {
   deny: string;
 }
 
+export type NotificationLevel = "ALL_MESSAGES" | "ONLY_MENTIONS" | "NOTHING";
+
+export interface MessageChannelMention {
+  id: string;
+  guild_id: string | null;
+  type: ChannelTypeValue;
+  name: string | null;
+}
+
 export interface MessagePayload {
   id: string;
   channel_id: string;
@@ -27,6 +36,10 @@ export interface MessagePayload {
   author: UserSummary;
   content: string;
   attachments: APIAttachment[];
+  mention_everyone: boolean;
+  mentions: UserSummary[];
+  mention_roles: string[];
+  mention_channels: MessageChannelMention[];
   timestamp: string;
   edited_timestamp: string | null;
   type: 0;
@@ -174,6 +187,25 @@ export interface ReadStateUpdateEvent {
   channel_id: string;
   user_id: string;
   last_read_message_id: string | null;
+}
+
+export interface ChannelBadgePayload {
+  channel_id: string;
+  guild_id: string | null;
+  unread_count: number;
+  mention_count: number;
+  last_message_id: string | null;
+}
+
+export interface GuildBadgePayload {
+  guild_id: string;
+  unread_count: number;
+  mention_count: number;
+}
+
+export interface BadgesPayload {
+  channels: ChannelBadgePayload[];
+  guilds: GuildBadgePayload[];
 }
 
 export interface GuildRoleEvent {

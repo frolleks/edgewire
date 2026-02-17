@@ -1,5 +1,7 @@
 export const queryKeys = {
   me: ["me"] as const,
+  badges: ["badges"] as const,
+  channelBadge: (channelId: string) => ["channel-badge", channelId] as const,
   dmChannels: ["dm-channels"] as const,
   guilds: ["guilds"] as const,
   guildSettings: (guildId: string) => ["guild-settings", guildId] as const,

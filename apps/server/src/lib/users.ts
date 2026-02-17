@@ -26,12 +26,16 @@ export interface UserSummary {
 }
 
 export type UserTheme = "system" | "light" | "dark";
+export type NotificationLevel = "ALL_MESSAGES" | "ONLY_MENTIONS" | "NOTHING";
 
 export interface UserSettingsPayload {
   theme: UserTheme;
   compact_mode: boolean;
   show_timestamps: boolean;
   locale: string | null;
+  enable_desktop_notifications: boolean;
+  notification_sounds: boolean;
+  default_guild_notification_level: NotificationLevel;
 }
 
 export interface CurrentUserPayload extends UserSummary {
@@ -48,6 +52,9 @@ const DEFAULT_SETTINGS: UserSettingsPayload = {
   compact_mode: false,
   show_timestamps: true,
   locale: null,
+  enable_desktop_notifications: false,
+  notification_sounds: true,
+  default_guild_notification_level: "ONLY_MENTIONS",
 };
 
 const randomSuffix = (): string => Math.floor(Math.random() * 10_000).toString().padStart(4, "0");
@@ -192,6 +199,9 @@ const buildMergedUserPayload = (row: {
   settingsCompactMode: boolean | null;
   settingsShowTimestamps: boolean | null;
   settingsLocale: string | null;
+  settingsEnableDesktopNotifications: boolean | null;
+  settingsNotificationSounds: boolean | null;
+  settingsDefaultGuildNotificationLevel: NotificationLevel | null;
 }): CurrentUserPayload => {
   const summary = toSummaryFromSource({
     id: row.id,
@@ -218,6 +228,11 @@ const buildMergedUserPayload = (row: {
       compact_mode: row.settingsCompactMode ?? DEFAULT_SETTINGS.compact_mode,
       show_timestamps: row.settingsShowTimestamps ?? DEFAULT_SETTINGS.show_timestamps,
       locale: row.settingsLocale ?? DEFAULT_SETTINGS.locale,
+      enable_desktop_notifications:
+        row.settingsEnableDesktopNotifications ?? DEFAULT_SETTINGS.enable_desktop_notifications,
+      notification_sounds: row.settingsNotificationSounds ?? DEFAULT_SETTINGS.notification_sounds,
+      default_guild_notification_level:
+        row.settingsDefaultGuildNotificationLevel ?? DEFAULT_SETTINGS.default_guild_notification_level,
     },
   };
 };
@@ -271,6 +286,9 @@ export const getCurrentUserById = async (userId: string): Promise<CurrentUserPay
       settingsCompactMode: userSettings.compactMode,
       settingsShowTimestamps: userSettings.showTimestamps,
       settingsLocale: userSettings.locale,
+      settingsEnableDesktopNotifications: userSettings.enableDesktopNotifications,
+      settingsNotificationSounds: userSettings.notificationSounds,
+      settingsDefaultGuildNotificationLevel: userSettings.defaultGuildNotificationLevel,
     })
     .from(users)
     .leftJoin(userProfiles, eq(userProfiles.userId, users.id))
@@ -357,4 +375,3 @@ export const ensureAppUser = async (authUser: AuthUserLike): Promise<UserSummary
 
   throw new Error("Unable to allocate a unique username.");
 };
-

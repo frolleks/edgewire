@@ -2,8 +2,9 @@ import { ChannelType } from "@discord/types";
 import type { BunRequest } from "bun";
 import { eq } from "drizzle-orm";
 import { db } from "../db";
-import { channels, messageReads } from "../db/schema";
+import { channelReads, channels } from "../db/schema";
 import { badRequest, empty, forbidden, json, notFound, parseJson, requireAuth } from "../http";
+import { emitBadgeUpdateForUserChannel } from "../lib/badges";
 import { PermissionBits } from "../lib/permissions";
 import { hasChannelPermission, hasGuildPermission } from "../lib/permission-service";
 import {
@@ -220,17 +221,23 @@ export const updateReadState = async (request: BunRequest<"/api/channels/:channe
   }
 
   await db
-    .insert(messageReads)
+    .insert(channelReads)
     .values({
       channelId,
       userId: me.id,
       lastReadMessageId: parsed.data.last_read_message_id,
+      lastReadAt: new Date(),
+      unreadCount: 0,
+      mentionCount: 0,
       updatedAt: new Date(),
     })
     .onConflictDoUpdate({
-      target: [messageReads.channelId, messageReads.userId],
+      target: [channelReads.userId, channelReads.channelId],
       set: {
         lastReadMessageId: parsed.data.last_read_message_id,
+        lastReadAt: new Date(),
+        unreadCount: 0,
+        mentionCount: 0,
         updatedAt: new Date(),
       },
     });
@@ -242,5 +249,6 @@ export const updateReadState = async (request: BunRequest<"/api/channels/:channe
   };
 
   await emitToChannelAudience(access.channel, "READ_STATE_UPDATE", payload);
+  await emitBadgeUpdateForUserChannel(me.id, channelId);
   return json(request, payload);
 };

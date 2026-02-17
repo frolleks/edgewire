@@ -3,12 +3,12 @@ import type { BunRequest } from "bun";
 import { and, eq } from "drizzle-orm";
 import { db } from "../db";
 import {
+  channelReads,
   channelMembers,
   channels,
   guildMemberRoles,
   guildMembers,
   guilds,
-  messageReads,
   userProfiles,
   userSettings,
   users,
@@ -43,9 +43,13 @@ type PatchMeSettingsBody = {
   compact_mode?: unknown;
   show_timestamps?: unknown;
   locale?: unknown;
+  enable_desktop_notifications?: unknown;
+  notification_sounds?: unknown;
+  default_guild_notification_level?: unknown;
 };
 
 const USER_THEME_VALUES = new Set(["system", "light", "dark"]);
+const NOTIFICATION_LEVEL_VALUES = new Set(["ALL_MESSAGES", "ONLY_MENTIONS", "NOTHING"]);
 
 const ensureSupplementaryRows = async (user: { id: string; username: string; display_name: string; avatar_url: string | null }) => {
   await db
@@ -313,6 +317,30 @@ export const patchMeSettings = async (request: Request): Promise<Response> => {
     updates.locale = locale;
   }
 
+  if (body.enable_desktop_notifications !== undefined) {
+    if (typeof body.enable_desktop_notifications !== "boolean") {
+      return badRequest(request, "enable_desktop_notifications must be a boolean.");
+    }
+    updates.enableDesktopNotifications = body.enable_desktop_notifications;
+  }
+
+  if (body.notification_sounds !== undefined) {
+    if (typeof body.notification_sounds !== "boolean") {
+      return badRequest(request, "notification_sounds must be a boolean.");
+    }
+    updates.notificationSounds = body.notification_sounds;
+  }
+
+  if (body.default_guild_notification_level !== undefined) {
+    if (
+      typeof body.default_guild_notification_level !== "string" ||
+      !NOTIFICATION_LEVEL_VALUES.has(body.default_guild_notification_level)
+    ) {
+      return badRequest(request, "default_guild_notification_level must be ALL_MESSAGES, ONLY_MENTIONS, or NOTHING.");
+    }
+    updates.defaultGuildNotificationLevel = body.default_guild_notification_level;
+  }
+
   if (Object.keys(updates).length === 0) {
     return badRequest(request, "No settings fields provided.");
   }
@@ -388,7 +416,7 @@ export const createMyChannel = async (request: Request): Promise<Response> => {
         { channelId: createdChannelId, userId: recipientId },
       ]);
 
-      await tx.insert(messageReads).values([
+      await tx.insert(channelReads).values([
         { channelId: createdChannelId, userId: me.id, lastReadMessageId: null },
         { channelId: createdChannelId, userId: recipientId, lastReadMessageId: null },
       ]);

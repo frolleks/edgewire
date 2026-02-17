@@ -9,6 +9,7 @@ type DmSidebarProps = {
   onSearchChange: (value: string) => void;
   usersSearchResults?: UserSummary[];
   dmChannels: DmChannel[];
+  channelBadges: Map<string, { unread_count: number; mention_count: number }>;
   activeChannelId: string | null;
   onCreateDm: (recipientId: string) => void;
 };
@@ -18,6 +19,7 @@ export function DmSidebar({
   onSearchChange,
   usersSearchResults,
   dmChannels,
+  channelBadges,
   activeChannelId,
   onCreateDm,
 }: DmSidebarProps) {
@@ -60,6 +62,10 @@ export function DmSidebar({
         {dmChannels.map((channel) => {
           const recipient = channel.recipients[0];
           const active = activeChannelId === channel.id;
+          const badge = channelBadges.get(channel.id);
+          const mentionCount = badge?.mention_count ?? 0;
+          const unreadCount = badge?.unread_count ?? (channel.unread ? 1 : 0);
+
           return (
             <Link
               key={channel.id}
@@ -70,7 +76,11 @@ export function DmSidebar({
                 <span className="font-medium truncate">
                   {recipient?.display_name ?? "Unknown"}
                 </span>
-                {channel.unread ? (
+                {mentionCount > 0 ? (
+                  <span className="min-w-5 rounded-full bg-destructive px-1.5 py-0.5 text-center text-[10px] font-semibold text-destructive-foreground">
+                    {mentionCount > 99 ? "99+" : mentionCount}
+                  </span>
+                ) : unreadCount > 0 ? (
                   <span className="h-2 w-2 rounded-full bg-primary" />
                 ) : null}
               </div>

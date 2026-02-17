@@ -27,6 +27,7 @@ export const users = pgTable(
 );
 
 export const userThemeEnum = pgEnum("user_theme", ["system", "light", "dark"]);
+export const notificationLevelEnum = pgEnum("notification_level", ["ALL_MESSAGES", "ONLY_MENTIONS", "NOTHING"]);
 
 export const userProfiles = pgTable(
   "user_profiles",
@@ -59,6 +60,11 @@ export const userSettings = pgTable(
     compactMode: boolean("compact_mode").notNull().default(false),
     showTimestamps: boolean("show_timestamps").notNull().default(true),
     locale: text("locale"),
+    enableDesktopNotifications: boolean("enable_desktop_notifications").notNull().default(false),
+    notificationSounds: boolean("notification_sounds").notNull().default(true),
+    defaultGuildNotificationLevel: notificationLevelEnum("default_guild_notification_level")
+      .notNull()
+      .default("ONLY_MENTIONS"),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
 );
@@ -204,6 +210,10 @@ export const messages = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     content: text("content").notNull(),
+    mentionEveryone: boolean("mention_everyone").notNull().default(false),
+    mentionUserIds: text("mention_user_ids").array().notNull().default(sql`ARRAY[]::text[]`),
+    mentionRoleIds: text("mention_role_ids").array().notNull().default(sql`ARRAY[]::text[]`),
+    mentionChannelIds: text("mention_channel_ids").array().notNull().default(sql`ARRAY[]::text[]`),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     editedAt: timestamp("edited_at", { withTimezone: true }),
   },
@@ -288,6 +298,86 @@ export const messageReads = pgTable(
   table => [primaryKey({ columns: [table.channelId, table.userId], name: "message_reads_pk" })],
 );
 
+export const channelReads = pgTable(
+  "channel_reads",
+  {
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    channelId: text("channel_id")
+      .notNull()
+      .references(() => channels.id, { onDelete: "cascade" }),
+    lastReadMessageId: text("last_read_message_id"),
+    lastReadAt: timestamp("last_read_at", { withTimezone: true }).notNull().defaultNow(),
+    unreadCount: integer("unread_count").notNull().default(0),
+    mentionCount: integer("mention_count").notNull().default(0),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  table => [
+    primaryKey({ columns: [table.userId, table.channelId], name: "channel_reads_pk" }),
+    index("channel_reads_channel_id_idx").on(table.channelId),
+  ],
+);
+
+export const messageMentions = pgTable(
+  "message_mentions",
+  {
+    messageId: text("message_id")
+      .notNull()
+      .references(() => messages.id, { onDelete: "cascade" }),
+    channelId: text("channel_id")
+      .notNull()
+      .references(() => channels.id, { onDelete: "cascade" }),
+    guildId: text("guild_id").references(() => guilds.id, { onDelete: "cascade" }),
+    mentionedUserId: text("mentioned_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  table => [
+    primaryKey({ columns: [table.messageId, table.mentionedUserId], name: "message_mentions_pk" }),
+    index("message_mentions_message_idx").on(table.messageId),
+    index("message_mentions_channel_idx").on(table.channelId),
+    index("message_mentions_guild_idx").on(table.guildId),
+    index("message_mentions_mentioned_user_idx").on(table.mentionedUserId),
+  ],
+);
+
+export const userGuildNotificationSettings = pgTable(
+  "user_guild_notification_settings",
+  {
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    guildId: text("guild_id")
+      .notNull()
+      .references(() => guilds.id, { onDelete: "cascade" }),
+    level: notificationLevelEnum("level").notNull().default("ONLY_MENTIONS"),
+    suppressEveryone: boolean("suppress_everyone").notNull().default(false),
+    muted: boolean("muted").notNull().default(false),
+    mutedUntil: timestamp("muted_until", { withTimezone: true }),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  table => [primaryKey({ columns: [table.userId, table.guildId], name: "user_guild_notification_settings_pk" })],
+);
+
+export const userChannelNotificationSettings = pgTable(
+  "user_channel_notification_settings",
+  {
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    channelId: text("channel_id")
+      .notNull()
+      .references(() => channels.id, { onDelete: "cascade" }),
+    level: notificationLevelEnum("level"),
+    muted: boolean("muted").notNull().default(false),
+    mutedUntil: timestamp("muted_until", { withTimezone: true }),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  table => [primaryKey({ columns: [table.userId, table.channelId], name: "user_channel_notification_settings_pk" })],
+);
+
 export const channelPermissionOverwrites = pgTable(
   "channel_permission_overwrites",
   {
@@ -346,6 +436,10 @@ export const schema = {
   uploadSessions,
   messageAttachments,
   messageReads,
+  channelReads,
+  messageMentions,
+  userGuildNotificationSettings,
+  userChannelNotificationSettings,
   channelPermissionOverwrites,
   invites,
 };

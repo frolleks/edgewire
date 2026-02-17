@@ -7,10 +7,11 @@ import { Button } from "@/components/ui/button";
 type GuildSwitcherProps = {
   route: AppRoute;
   guilds: Guild[];
+  guildBadges: Map<string, { unread_count: number; mention_count: number }>;
   onCreateGuild: () => void;
 };
 
-export function GuildSwitcher({ route, guilds, onCreateGuild }: GuildSwitcherProps) {
+export function GuildSwitcher({ route, guilds, guildBadges, onCreateGuild }: GuildSwitcherProps) {
   return (
     <aside className="border-r bg-card flex flex-col items-center py-3 gap-3">
       <Button
@@ -28,18 +29,29 @@ export function GuildSwitcher({ route, guilds, onCreateGuild }: GuildSwitcherPro
       <div className="flex-1 w-full px-2 space-y-2 overflow-y-auto">
         {guilds.map((guild) => {
           const active = route.mode === "guild" && route.guildId === guild.id;
+          const badge = guildBadges.get(guild.id);
+          const mentionCount = badge?.mention_count ?? 0;
+          const unreadCount = badge?.unread_count ?? 0;
           return (
-            <Button
-              key={guild.id}
-              asChild
-              size="icon"
-              variant={active ? "secondary" : "ghost"}
-              className="w-full rounded-xl"
-            >
-              <Link to={`/app/channels/${guild.id}`} aria-label={guild.name}>
-                {guild.name.slice(0, 1).toUpperCase()}
-              </Link>
-            </Button>
+            <div key={guild.id} className="relative">
+              <Button
+                asChild
+                size="icon"
+                variant={active ? "secondary" : "ghost"}
+                className="w-full rounded-xl"
+              >
+                <Link to={`/app/channels/${guild.id}`} aria-label={guild.name}>
+                  {guild.name.slice(0, 1).toUpperCase()}
+                </Link>
+              </Button>
+              {mentionCount > 0 ? (
+                <span className="absolute -right-1.5 -top-1 min-w-5 rounded-full bg-destructive px-1.5 py-0.5 text-center text-[10px] font-semibold text-destructive-foreground">
+                  {mentionCount > 99 ? "99+" : mentionCount}
+                </span>
+              ) : unreadCount > 0 ? (
+                <span className="absolute -right-1 -top-0.5 h-2.5 w-2.5 rounded-full bg-primary" />
+              ) : null}
+            </div>
           );
         })}
       </div>

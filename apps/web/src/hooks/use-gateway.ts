@@ -1,6 +1,8 @@
 import type {
+  ChannelBadgePayload,
   DmChannelPayload,
   GatewayPacket,
+  GuildBadgePayload,
   GuildChannelPayload,
   GuildCreateEvent,
   GuildRole,
@@ -11,8 +13,10 @@ import type {
 import { useQueryClient } from "@tanstack/react-query";
 import type { InfiniteData } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
+import { toast } from "sonner";
 import {
   api,
+  type BadgesResponse,
   type CurrentUser,
   type DmChannel,
   type Guild,
@@ -268,6 +272,46 @@ const removeGuildMemberFromInfinite = (
   };
 };
 
+const upsertChannelBadge = (
+  current: BadgesResponse | undefined,
+  nextBadge: ChannelBadgePayload,
+): BadgesResponse => {
+  const existing = current ?? { channels: [], guilds: [] };
+  const index = existing.channels.findIndex(channel => channel.channel_id === nextBadge.channel_id);
+
+  const nextChannels = [...existing.channels];
+  if (index === -1) {
+    nextChannels.push(nextBadge);
+  } else {
+    nextChannels[index] = nextBadge;
+  }
+
+  return {
+    ...existing,
+    channels: nextChannels,
+  };
+};
+
+const upsertGuildBadge = (
+  current: BadgesResponse | undefined,
+  nextBadge: GuildBadgePayload,
+): BadgesResponse => {
+  const existing = current ?? { channels: [], guilds: [] };
+  const index = existing.guilds.findIndex(guild => guild.guild_id === nextBadge.guild_id);
+
+  const nextGuilds = [...existing.guilds];
+  if (index === -1) {
+    nextGuilds.push(nextBadge);
+  } else {
+    nextGuilds[index] = nextBadge;
+  }
+
+  return {
+    ...existing,
+    guilds: nextGuilds,
+  };
+};
+
 export const useGateway = ({ enabled, userId, activeChannelId }: GatewayParams): void => {
   const queryClient = useQueryClient();
   const socketRef = useRef<WebSocket | null>(null);
@@ -486,6 +530,40 @@ export const useGateway = ({ enabled, userId, activeChannelId }: GatewayParams):
               (old ?? []).filter(item => item.id !== channel.id),
             );
             queryClient.removeQueries({ queryKey: queryKeys.messages(channel.id) });
+            queryClient.setQueryData<BadgesResponse>(queryKeys.badges, old => {
+              if (!old) {
+                return old;
+              }
+              const nextChannels = old.channels.filter(item => item.channel_id !== channel.id);
+              const unreadCount = nextChannels
+                .filter(item => item.guild_id === channel.guild_id)
+                .reduce((sum, item) => sum + item.unread_count, 0);
+              const mentionCount = nextChannels
+                .filter(item => item.guild_id === channel.guild_id)
+                .reduce((sum, item) => sum + item.mention_count, 0);
+
+              const guildIndex = old.guilds.findIndex(item => item.guild_id === channel.guild_id);
+              const nextGuilds = [...old.guilds];
+              if (guildIndex === -1) {
+                nextGuilds.push({
+                  guild_id: channel.guild_id,
+                  unread_count: unreadCount,
+                  mention_count: mentionCount,
+                });
+              } else {
+                nextGuilds[guildIndex] = {
+                  guild_id: channel.guild_id,
+                  unread_count: unreadCount,
+                  mention_count: mentionCount,
+                };
+              }
+
+              return {
+                channels: nextChannels,
+                guilds: nextGuilds,
+              };
+            });
+            queryClient.removeQueries({ queryKey: queryKeys.channelBadge(channel.id) });
             break;
           }
           case "MESSAGE_CREATE": {
@@ -578,6 +656,81 @@ export const useGateway = ({ enabled, userId, activeChannelId }: GatewayParams):
                   channel.id === payload.channel_id ? { ...channel, unread: false } : channel,
                 ),
               );
+            }
+            break;
+          }
+          case "CHANNEL_BADGE_UPDATE": {
+            const payload = packet.d as ChannelBadgePayload;
+            queryClient.setQueryData<BadgesResponse>(queryKeys.badges, old => upsertChannelBadge(old, payload));
+            queryClient.setQueryData<ChannelBadgePayload>(queryKeys.channelBadge(payload.channel_id), payload);
+
+            queryClient.setQueryData<DmChannel[]>(queryKeys.dmChannels, old =>
+              (old ?? []).map(channel =>
+                channel.id === payload.channel_id
+                  ? {
+                      ...channel,
+                      unread: payload.unread_count > 0,
+                    }
+                  : channel,
+              ),
+            );
+            break;
+          }
+          case "GUILD_BADGE_UPDATE": {
+            const payload = packet.d as GuildBadgePayload;
+            queryClient.setQueryData<BadgesResponse>(queryKeys.badges, old => upsertGuildBadge(old, payload));
+            break;
+          }
+          case "NOTIFICATION_CREATE": {
+            const payload = packet.d as {
+              channel_id: string;
+              guild_id: string | null;
+              message_id: string;
+              author: UserSummary;
+              mentioned: boolean;
+            };
+
+            if (payload.channel_id === activeChannelId) {
+              break;
+            }
+
+            const authorName = payload.author.display_name || payload.author.username || "Someone";
+            const dmChannels = queryClient.getQueryData<DmChannel[]>(queryKeys.dmChannels) ?? [];
+            const dmChannel = dmChannels.find(channel => channel.id === payload.channel_id);
+
+            const guildChannels = payload.guild_id
+              ? queryClient.getQueryData<GuildChannelPayload[]>(queryKeys.guildChannels(payload.guild_id)) ?? []
+              : [];
+            const guildChannel = guildChannels.find(channel => channel.id === payload.channel_id);
+            const channelLabel = guildChannel?.name ?? dmChannel?.recipients[0]?.display_name ?? "channel";
+
+            const title = payload.mentioned
+              ? `Mentioned by ${authorName}`
+              : payload.guild_id
+                ? "New message"
+                : `New DM from ${authorName}`;
+            const body = payload.mentioned
+              ? `Mentioned in #${channelLabel}`
+              : payload.guild_id
+                ? `New message in #${channelLabel}`
+                : `Message from ${authorName}`;
+
+            toast.message(title, {
+              description: body,
+            });
+
+            const me = queryClient.getQueryData<CurrentUser>(queryKeys.me);
+            const desktopEnabled = Boolean(me?.settings.enable_desktop_notifications);
+            if (
+              desktopEnabled &&
+              document.hidden &&
+              typeof window !== "undefined" &&
+              "Notification" in window &&
+              Notification.permission === "granted"
+            ) {
+              void new Notification(title, {
+                body,
+              });
             }
             break;
           }
@@ -753,6 +906,14 @@ export const useGateway = ({ enabled, userId, activeChannelId }: GatewayParams):
               queryClient.removeQueries({
                 queryKey: queryKeys.guildSettings(payload.guild_id),
               });
+              queryClient.setQueryData<BadgesResponse>(queryKeys.badges, old =>
+                old
+                  ? {
+                      channels: old.channels.filter(channel => channel.guild_id !== payload.guild_id),
+                      guilds: old.guilds.filter(guild => guild.guild_id !== payload.guild_id),
+                    }
+                  : old,
+              );
             }
             break;
           }

@@ -1,6 +1,7 @@
 export const PermissionBits = {
   VIEW_CHANNEL: 1n << 10n,
   SEND_MESSAGES: 1n << 11n,
+  MENTION_EVERYONE: 1n << 17n,
   MANAGE_MESSAGES: 1n << 13n,
   MANAGE_CHANNELS: 1n << 4n,
   MANAGE_GUILD: 1n << 5n,
@@ -93,6 +94,12 @@ export const permissionChecklist = [
   { key: "MANAGE_GUILD", label: "Manage Server", bit: PermissionBits.MANAGE_GUILD, group: "General" },
   { key: "MANAGE_CHANNELS", label: "Manage Channels", bit: PermissionBits.MANAGE_CHANNELS, group: "General" },
   { key: "SEND_MESSAGES", label: "Send Messages", bit: PermissionBits.SEND_MESSAGES, group: "Text" },
+  {
+    key: "MENTION_EVERYONE",
+    label: "Mention Everyone",
+    bit: PermissionBits.MENTION_EVERYONE,
+    group: "Text",
+  },
   { key: "MANAGE_MESSAGES", label: "Manage Messages", bit: PermissionBits.MANAGE_MESSAGES, group: "Text" },
   {
     key: "READ_MESSAGE_HISTORY",

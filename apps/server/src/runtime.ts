@@ -7,6 +7,7 @@ import type {
   GuildChannelPayload,
   GuildCreateEvent,
   InvitePayload,
+  MessageChannelMention,
   MessagePayload,
   PartialGuild,
   ReadyEvent,
@@ -18,6 +19,7 @@ import { z } from "zod";
 import { auth } from "./auth";
 import { db } from "./db";
 import {
+  channelReads,
   channelMembers,
   channelPermissionOverwrites,
   channels,
@@ -27,11 +29,11 @@ import {
   guilds,
   invites,
   messageAttachments,
-  messageReads,
   messages,
   users,
 } from "./db/schema";
 import { env } from "./env";
+import { listGuildChannelAudienceMemberIds, resolveMentionChannelPayloads, resolveMentionUserSummaries } from "./lib/mentions";
 import { nextSnowflake } from "./lib/snowflake";
 import { ensureAppUser, getUserSummaryById, toUserSummary, type AuthUserLike, type UserSummary } from "./lib/users";
 import { presignGet, toPublicObjectUrl } from "./storage/s3";
@@ -41,7 +43,12 @@ export const MESSAGE_MAX_LENGTH = 2_000;
 export const MAX_NAME_LENGTH = 100;
 export const MAX_TOPIC_LENGTH = 1_024;
 export const ID_REGEX = /^\d+$/;
+export const USER_MENTION_ID_REGEX = /^[^\s>]+$/;
 export const INVITE_CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+const USER_MENTION_TOKEN_REGEX = /<@!?([^\s>]+)>/g;
+const ROLE_MENTION_TOKEN_REGEX = /<@&([^\s>]+)>/g;
+const CHANNEL_MENTION_TOKEN_REGEX = /<#([^\s>]+)>/g;
+const EVERYONE_MENTION_TOKEN_REGEX = /\B@(everyone|here)\b/;
 
 export const guildNameSchema = z.object({
   name: z.string().trim().min(1).max(MAX_NAME_LENGTH),
@@ -62,9 +69,18 @@ export const patchChannelSchema = z.object({
   position: z.number().int().min(0).max(10_000).optional(),
 });
 
+export const allowedMentionsSchema = z
+  .object({
+    parse: z.array(z.union([z.literal("users"), z.literal("roles"), z.literal("everyone")])).max(3).optional(),
+    users: z.array(z.string().trim().regex(USER_MENTION_ID_REGEX)).max(100).optional(),
+    roles: z.array(z.string().trim().regex(ID_REGEX)).max(100).optional(),
+  })
+  .strict();
+
 export const createMessageSchema = z.object({
   content: z.string().max(MESSAGE_MAX_LENGTH).optional(),
   attachment_upload_ids: z.array(z.string().trim().min(1).max(64)).max(10).optional(),
+  allowed_mentions: allowedMentionsSchema.optional(),
 })
   .superRefine((value, ctx) => {
     const hasContent = Boolean(value.content?.trim());
@@ -80,6 +96,7 @@ export const createMessageSchema = z.object({
 
 export const editMessageSchema = z.object({
   content: z.string().trim().min(1).max(MESSAGE_MAX_LENGTH),
+  allowed_mentions: allowedMentionsSchema.optional(),
 });
 
 export const readStateSchema = z.object({
@@ -341,6 +358,12 @@ export const emitToChannelAudience = async (channel: ChannelRow, event: string, 
   }
 
   if (channel.guildId) {
+    if (channel.type === ChannelType.GUILD_TEXT) {
+      const visibleMembers = await listGuildChannelAudienceMemberIds(channel.guildId, channel.id);
+      emitToUsers(visibleMembers, event, data);
+      return;
+    }
+
     await emitToGuild(channel.guildId, event, data);
   }
 };
@@ -422,22 +445,83 @@ export const listMessageAttachmentPayloads = async (messageIds: string[]): Promi
   return grouped;
 };
 
+const unique = (values: string[] | null | undefined): string[] => [...new Set((values ?? []).filter(Boolean))];
+
+const extractMentionIds = (content: string, regex: RegExp): string[] => {
+  const ids = new Set<string>();
+  for (const match of content.matchAll(regex)) {
+    const id = match[1];
+    if (id) {
+      ids.add(id);
+    }
+  }
+  return [...ids];
+};
+
+export type MessageMentionContext = {
+  mentionUsersById: Map<string, SharedUserSummary>;
+  mentionChannelsById: Map<string, MessageChannelMention>;
+};
+
+export const buildMessageMentionContext = async (rows: MessageRow[]): Promise<MessageMentionContext> => {
+  const mentionUserIds = unique(
+    rows.flatMap(row => [...(row.mentionUserIds ?? []), ...extractMentionIds(row.content, USER_MENTION_TOKEN_REGEX)]),
+  );
+  const mentionChannelIds = unique(
+    rows.flatMap(row => [...(row.mentionChannelIds ?? []), ...extractMentionIds(row.content, CHANNEL_MENTION_TOKEN_REGEX)]),
+  );
+
+  const [mentionUsersById, mentionChannels] = await Promise.all([
+    resolveMentionUserSummaries(mentionUserIds),
+    resolveMentionChannelPayloads(mentionChannelIds),
+  ]);
+
+  return {
+    mentionUsersById,
+    mentionChannelsById: new Map(mentionChannels.map(channel => [channel.id, channel])),
+  };
+};
+
 export const makeMessagePayload = (
   message: MessageRow,
   author: SharedUserSummary,
   guildId: string | null,
   attachments: APIAttachment[] = [],
-): MessagePayload => ({
-  id: message.id,
-  channel_id: message.channelId,
-  guild_id: guildId,
-  author,
-  content: message.content,
-  attachments,
-  timestamp: toIso(message.createdAt) ?? new Date().toISOString(),
-  edited_timestamp: toIso(message.editedAt),
-  type: 0,
-});
+  mentionContext?: MessageMentionContext,
+): MessagePayload => {
+  const mentionUserIds = unique([
+    ...(message.mentionUserIds ?? []),
+    ...extractMentionIds(message.content, USER_MENTION_TOKEN_REGEX),
+  ]);
+  const mentionRoleIds = unique([
+    ...(message.mentionRoleIds ?? []),
+    ...extractMentionIds(message.content, ROLE_MENTION_TOKEN_REGEX),
+  ]);
+  const mentionChannelIds = unique([
+    ...(message.mentionChannelIds ?? []),
+    ...extractMentionIds(message.content, CHANNEL_MENTION_TOKEN_REGEX),
+  ]);
+
+  return {
+    id: message.id,
+    channel_id: message.channelId,
+    guild_id: guildId,
+    author,
+    content: message.content,
+    attachments,
+    mention_everyone: message.mentionEveryone || EVERYONE_MENTION_TOKEN_REGEX.test(message.content),
+    mentions: mentionUserIds
+      .map(userId => mentionContext?.mentionUsersById.get(userId))
+      .filter((user): user is SharedUserSummary => Boolean(user)),
+    mention_roles: mentionRoleIds,
+    mention_channels: mentionChannelIds
+      .map(channelId => mentionContext?.mentionChannelsById.get(channelId))
+      .filter((channel): channel is MessageChannelMention => Boolean(channel)),
+    timestamp: toIso(message.createdAt) ?? new Date().toISOString(),
+    edited_timestamp: toIso(message.editedAt),
+    type: 0,
+  };
+};
 
 export const toGuildPayload = (guild: GuildRow): PartialGuild => ({
   id: guild.id,
@@ -532,14 +616,15 @@ export const toDmChannelPayload = async (channel: ChannelRow, viewerId: string):
     .orderBy(desc(sql`${messages.id}::bigint`))
     .limit(1);
 
-  const readState = await db.query.messageReads.findFirst({
-    where: and(eq(messageReads.channelId, channel.id), eq(messageReads.userId, viewerId)),
+  const readState = await db.query.channelReads.findFirst({
+    where: and(eq(channelReads.channelId, channel.id), eq(channelReads.userId, viewerId)),
   });
 
   let lastMessagePayload: MessagePayload | null = null;
   if (lastMessage) {
     const author = await getUserSummaryById(lastMessage.authorId);
     const attachmentsByMessage = await listMessageAttachmentPayloads([lastMessage.id]);
+    const mentionContext = await buildMessageMentionContext([lastMessage]);
     lastMessagePayload = makeMessagePayload(
       lastMessage,
       {
@@ -550,12 +635,11 @@ export const toDmChannelPayload = async (channel: ChannelRow, viewerId: string):
       },
       null,
       attachmentsByMessage.get(lastMessage.id) ?? [],
+      mentionContext,
     );
   }
 
-  const unread =
-    Boolean(lastMessage?.id) &&
-    (!readState?.lastReadMessageId || compareSnowflakesDesc(lastMessage!.id, readState.lastReadMessageId) === -1);
+  const unread = (readState?.unreadCount ?? 0) > 0;
 
   return {
     id: channel.id,
@@ -806,6 +890,7 @@ export const listChannelMessages = async (
 
   const authors = new Map(authorRows.map(row => [row.id, toUserSummary(row)]));
   const attachmentsByMessage = await listMessageAttachmentPayloads(rows.map(row => row.id));
+  const mentionContext = await buildMessageMentionContext(rows);
 
   const channel = await db.query.channels.findFirst({
     where: eq(channels.id, channelId),
@@ -825,6 +910,7 @@ export const listChannelMessages = async (
       },
       guildId,
       attachmentsByMessage.get(row.id) ?? [],
+      mentionContext,
     );
   });
 };

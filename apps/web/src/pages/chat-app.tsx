@@ -1,4 +1,5 @@
 import type {
+  ChannelBadgePayload,
   GuildChannelPayload,
   MessagePayload,
   UserSummary,
@@ -48,6 +49,7 @@ import { useGateway } from "@/hooks/use-gateway";
 import { authClient } from "@/lib/auth-client";
 import {
   api,
+  type BadgesResponse,
   type CurrentUser,
   type DmChannel,
   type Guild,
@@ -151,6 +153,12 @@ export function ChatApp() {
     enabled: Boolean(sessionUser?.id),
   });
 
+  const badgesQuery = useQuery({
+    queryKey: queryKeys.badges,
+    queryFn: api.getBadges,
+    enabled: Boolean(sessionUser?.id),
+  });
+
   const guildChannelsQuery = useQuery({
     queryKey: queryKeys.guildChannels(route.guildId ?? "none"),
     queryFn: () => api.listGuildChannels(route.guildId!),
@@ -160,6 +168,12 @@ export function ChatApp() {
   const guildPermissionsQuery = useQuery({
     queryKey: queryKeys.guildPermissions(route.guildId ?? "none"),
     queryFn: () => api.getMyGuildPermissions(route.guildId!),
+    enabled: route.mode === "guild" && Boolean(route.guildId),
+  });
+
+  const activeGuildRolesQuery = useQuery({
+    queryKey: queryKeys.guildRoles(route.guildId ?? "none"),
+    queryFn: () => api.listGuildRoles(route.guildId!),
     enabled: route.mode === "guild" && Boolean(route.guildId),
   });
 
@@ -189,6 +203,17 @@ export function ChatApp() {
     () => dedupeById(dmChannelsQuery.data ?? []),
     [dmChannelsQuery.data],
   );
+  const badges = badgesQuery.data as BadgesResponse | undefined;
+  const channelBadges = badges?.channels ?? [];
+  const guildBadges = badges?.guilds ?? [];
+  const channelBadgeById = useMemo(
+    () => new Map(channelBadges.map((badge) => [badge.channel_id, badge])),
+    [channelBadges],
+  );
+  const guildBadgeById = useMemo(
+    () => new Map(guildBadges.map((badge) => [badge.guild_id, badge])),
+    [guildBadges],
+  );
   const guilds = useMemo(
     () => dedupeById(guildsQuery.data ?? []),
     [guildsQuery.data],
@@ -201,6 +226,7 @@ export function ChatApp() {
     guildPermissionsQuery.data?.permissions,
   );
   const myGuildRoleIds = guildPermissionsQuery.data?.role_ids ?? [];
+  const activeGuildRoles = activeGuildRolesQuery.data ?? [];
   const hasGuildPermission = (bit: bigint): boolean =>
     hasPermission(guildPermissions, PermissionBits.ADMINISTRATOR) ||
     hasPermission(guildPermissions, bit);
@@ -671,10 +697,95 @@ export function ChatApp() {
       return;
     }
 
+    queryClient.setQueryData<BadgesResponse>(queryKeys.badges, (old) => {
+      if (!old) {
+        return old;
+      }
+
+      let affectedGuildId: string | null = null;
+      let foundChannel = false;
+      const nextChannels = old.channels.map((badge) => {
+        if (badge.channel_id !== activeMessageChannelId) {
+          return badge;
+        }
+
+        foundChannel = true;
+        affectedGuildId = badge.guild_id;
+        return {
+          ...badge,
+          unread_count: 0,
+          mention_count: 0,
+          last_message_id: newestMessageId,
+        };
+      });
+
+      if (!foundChannel) {
+        affectedGuildId = route.mode === "guild" ? (route.guildId ?? null) : null;
+        nextChannels.push({
+          channel_id: activeMessageChannelId,
+          guild_id: affectedGuildId,
+          unread_count: 0,
+          mention_count: 0,
+          last_message_id: newestMessageId,
+        });
+      }
+
+      if (!affectedGuildId) {
+        return {
+          ...old,
+          channels: nextChannels,
+        };
+      }
+
+      const unreadCount = nextChannels
+        .filter((badge) => badge.guild_id === affectedGuildId)
+        .reduce((sum, badge) => sum + badge.unread_count, 0);
+      const mentionCount = nextChannels
+        .filter((badge) => badge.guild_id === affectedGuildId)
+        .reduce((sum, badge) => sum + badge.mention_count, 0);
+
+      const guildIndex = old.guilds.findIndex((badge) => badge.guild_id === affectedGuildId);
+      const nextGuilds = [...old.guilds];
+      if (guildIndex === -1) {
+        nextGuilds.push({
+          guild_id: affectedGuildId,
+          unread_count: unreadCount,
+          mention_count: mentionCount,
+        });
+      } else {
+        nextGuilds[guildIndex] = {
+          guild_id: affectedGuildId,
+          unread_count: unreadCount,
+          mention_count: mentionCount,
+        };
+      }
+
+      return {
+        channels: nextChannels,
+        guilds: nextGuilds,
+      };
+    });
+
+    queryClient.setQueryData<ChannelBadgePayload>(queryKeys.channelBadge(activeMessageChannelId), (old) => ({
+      channel_id: activeMessageChannelId,
+      guild_id: old?.guild_id ?? (route.mode === "guild" ? (route.guildId ?? null) : null),
+      unread_count: 0,
+      mention_count: 0,
+      last_message_id: newestMessageId,
+    }));
+
+    queryClient.setQueryData<DmChannel[]>(queryKeys.dmChannels, (old) =>
+      (old ?? []).map((channel) =>
+        channel.id === activeMessageChannelId ? { ...channel, unread: false } : channel,
+      ),
+    );
+
     api
       .markRead(activeMessageChannelId, newestMessageId)
-      .catch(() => undefined);
-  }, [activeMessageChannelId, newestMessageId]);
+      .catch(() => {
+        void queryClient.invalidateQueries({ queryKey: queryKeys.badges });
+      });
+  }, [activeMessageChannelId, newestMessageId, queryClient, route.guildId, route.mode]);
 
   useEffect(() => {
     if (!activeMessageChannelId) {
@@ -1012,7 +1123,7 @@ export function ChatApp() {
     return [...new Set(uploadIds)];
   };
 
-  const sendMessage = async (): Promise<void> => {
+  const sendMessage = async (serializedContent?: string): Promise<void> => {
     if (
       !activeMessageChannelId ||
       !canSendInActiveChannel ||
@@ -1021,7 +1132,7 @@ export function ChatApp() {
       return;
     }
 
-    const content = composerValue.trim();
+    const content = (serializedContent ?? composerValue).trim();
     if (!content && composerAttachments.length === 0) {
       return;
     }
@@ -1139,6 +1250,7 @@ export function ChatApp() {
         <GuildSwitcher
           route={route}
           guilds={guilds}
+          guildBadges={guildBadgeById}
           onCreateGuild={() => setCreateGuildOpen(true)}
         />
 
@@ -1149,6 +1261,7 @@ export function ChatApp() {
               onSearchChange={setSearch}
               usersSearchResults={usersSearchQuery.data}
               dmChannels={dmChannels}
+              channelBadges={channelBadgeById}
               activeChannelId={route.channelId}
               onCreateDm={(recipientId) => createDmMutation.mutate(recipientId)}
             />
@@ -1157,6 +1270,7 @@ export function ChatApp() {
               guildId={route.guildId}
               activeGuild={activeGuild}
               channels={guildChannels}
+              channelBadges={channelBadgeById}
               activeChannelId={route.channelId}
               canManageGuild={canManageGuild}
               canLeaveGuild={canLeaveActiveGuild}
@@ -1249,13 +1363,16 @@ export function ChatApp() {
               />
 
               <MessageList
-                messages={chronologicalMessages}
-                compactMode={compactMode}
-                showTimestamps={showTimestamps}
-                localePreference={localePreference}
-                routeMode={route.mode}
-                currentUserId={me?.id ?? sessionUser?.id ?? null}
-                activeGuildChannelPermissions={activeGuildChannelPermissions}
+              messages={chronologicalMessages}
+              compactMode={compactMode}
+              showTimestamps={showTimestamps}
+              localePreference={localePreference}
+              routeMode={route.mode}
+              currentUserId={me?.id ?? sessionUser?.id ?? null}
+              currentUserRoleIds={myGuildRoleIds}
+              guildRoles={activeGuildRoles}
+              guildChannels={guildChannels}
+              activeGuildChannelPermissions={activeGuildChannelPermissions}
                 onLoadOlder={() => messagesQuery.fetchNextPage()}
                 canLoadOlder={Boolean(messagesQuery.hasNextPage)}
                 isLoadingOlder={messagesQuery.isFetchingNextPage}
@@ -1286,6 +1403,9 @@ export function ChatApp() {
                 onValueChange={setComposerValue}
                 canSendInActiveChannel={canSendInActiveChannel}
                 routeMode={route.mode}
+                guildId={route.mode === "guild" ? (route.guildId ?? null) : null}
+                currentUserId={me?.id ?? sessionUser?.id ?? null}
+                dmMentionUser={activeDm?.recipients[0] ?? null}
                 dmUsername={activeDm?.recipients[0]?.username}
                 channelName={activeGuildChannel?.name}
                 attachments={composerAttachments}
@@ -1293,8 +1413,8 @@ export function ChatApp() {
                 isSendMutationPending={sendMessageMutation.isPending}
                 onAttachmentInputChange={handleAttachmentInputChange}
                 onRemoveAttachment={removeComposerAttachment}
-                onSend={() => {
-                  void sendMessage();
+                onSend={(serializedContent) => {
+                  void sendMessage(serializedContent);
                 }}
                 onTriggerTyping={triggerTyping}
               />

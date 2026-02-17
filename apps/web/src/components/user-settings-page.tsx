@@ -78,6 +78,9 @@ const APPEARANCE_SCHEMA = z.object({
   compact_mode: z.boolean(),
   show_timestamps: z.boolean(),
   locale: z.string().max(32, "Locale must be at most 32 characters."),
+  enable_desktop_notifications: z.boolean(),
+  notification_sounds: z.boolean(),
+  default_guild_notification_level: z.enum(["ALL_MESSAGES", "ONLY_MENTIONS", "NOTHING"]),
 });
 
 const CHANGE_EMAIL_SCHEMA = z.object({
@@ -235,6 +238,9 @@ export default function UserSettingsPage() {
     compact_mode: false,
     show_timestamps: true,
     locale: "",
+    enable_desktop_notifications: false,
+    notification_sounds: true,
+    default_guild_notification_level: "ONLY_MENTIONS",
   });
   const [appearanceErrors, setAppearanceErrors] = useState<Record<string, string>>({});
 
@@ -276,6 +282,9 @@ export default function UserSettingsPage() {
       compact_mode: me.settings.compact_mode,
       show_timestamps: me.settings.show_timestamps,
       locale: me.settings.locale ?? "",
+      enable_desktop_notifications: me.settings.enable_desktop_notifications,
+      notification_sounds: me.settings.notification_sounds,
+      default_guild_notification_level: me.settings.default_guild_notification_level,
     });
   }, [me]);
 
@@ -849,6 +858,66 @@ export default function UserSettingsPage() {
           />
         </div>
 
+        <div className="flex items-center justify-between gap-4 rounded-md border p-3">
+          <div>
+            <p className="text-sm font-medium">Enable desktop notifications</p>
+            <p className="text-xs text-muted-foreground">Show browser notifications while the app is in the background.</p>
+          </div>
+          <Switch
+            checked={appearanceDraft.enable_desktop_notifications}
+            onCheckedChange={checked =>
+              setAppearanceDraft(previous => ({
+                ...previous,
+                enable_desktop_notifications: checked,
+              }))
+            }
+          />
+        </div>
+        {appearanceErrors.enable_desktop_notifications ? (
+          <p className="text-xs text-destructive">{appearanceErrors.enable_desktop_notifications}</p>
+        ) : null}
+
+        <div className="flex items-center justify-between gap-4 rounded-md border p-3">
+          <div>
+            <p className="text-sm font-medium">Notification sounds</p>
+            <p className="text-xs text-muted-foreground">Play sounds for incoming notifications.</p>
+          </div>
+          <Switch
+            checked={appearanceDraft.notification_sounds}
+            onCheckedChange={checked =>
+              setAppearanceDraft(previous => ({
+                ...previous,
+                notification_sounds: checked,
+              }))
+            }
+          />
+        </div>
+
+        <div className="space-y-2">
+          <Label>Default server notification level</Label>
+          <Select
+            value={appearanceDraft.default_guild_notification_level}
+            onValueChange={value =>
+              setAppearanceDraft(previous => ({
+                ...previous,
+                default_guild_notification_level: value as CurrentUserSettings["default_guild_notification_level"],
+              }))
+            }
+          >
+            <SelectTrigger className="w-full max-w-xs">
+              <SelectValue placeholder="Select level" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="ALL_MESSAGES">All Messages</SelectItem>
+              <SelectItem value="ONLY_MENTIONS">Only Mentions</SelectItem>
+              <SelectItem value="NOTHING">Nothing</SelectItem>
+            </SelectContent>
+          </Select>
+          {appearanceErrors.default_guild_notification_level ? (
+            <p className="text-xs text-destructive">{appearanceErrors.default_guild_notification_level}</p>
+          ) : null}
+        </div>
+
         <div className="space-y-2">
           <Label htmlFor="settings-locale">Locale</Label>
           <Input
@@ -868,14 +937,40 @@ export default function UserSettingsPage() {
       <CardFooter className="justify-end">
         <Button
           disabled={settingsMutation.isPending}
-          onClick={() => {
+          onClick={async () => {
             const parsed = APPEARANCE_SCHEMA.safeParse(appearanceDraft);
             if (!parsed.success) {
               setAppearanceErrors({
                 theme: getFieldError(parsed.error.issues, "theme") ?? "",
                 locale: getFieldError(parsed.error.issues, "locale") ?? "",
+                default_guild_notification_level:
+                  getFieldError(parsed.error.issues, "default_guild_notification_level") ?? "",
               });
               return;
+            }
+
+            if (parsed.data.enable_desktop_notifications) {
+              if (typeof window === "undefined" || !("Notification" in window)) {
+                setAppearanceErrors({
+                  enable_desktop_notifications: "Desktop notifications are not supported in this browser.",
+                });
+                return;
+              }
+
+              if (Notification.permission === "default") {
+                const permission = await Notification.requestPermission();
+                if (permission !== "granted") {
+                  setAppearanceErrors({
+                    enable_desktop_notifications: "Desktop notification permission was not granted.",
+                  });
+                  return;
+                }
+              } else if (Notification.permission !== "granted") {
+                setAppearanceErrors({
+                  enable_desktop_notifications: "Desktop notifications are blocked for this site.",
+                });
+                return;
+              }
             }
 
             settingsMutation.mutate({
@@ -883,6 +978,9 @@ export default function UserSettingsPage() {
               compact_mode: parsed.data.compact_mode,
               show_timestamps: parsed.data.show_timestamps,
               locale: parsed.data.locale.trim() || null,
+              enable_desktop_notifications: parsed.data.enable_desktop_notifications,
+              notification_sounds: parsed.data.notification_sounds,
+              default_guild_notification_level: parsed.data.default_guild_notification_level,
             });
           }}
         >

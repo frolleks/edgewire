@@ -1,4 +1,4 @@
-import type { MessagePayload, UserSummary } from "@discord/types";
+import type { GuildChannelPayload, GuildRole, MessagePayload, UserSummary } from "@discord/types";
 import type { RefObject } from "react";
 import { Button } from "@/components/ui/button";
 import MessageItem from "./message-item";
@@ -10,6 +10,9 @@ type MessageListProps = {
   localePreference?: string;
   routeMode: "dm" | "guild";
   currentUserId: string | null;
+  currentUserRoleIds: string[];
+  guildRoles: GuildRole[];
+  guildChannels: GuildChannelPayload[];
   activeGuildChannelPermissions: bigint;
   onLoadOlder: () => void;
   canLoadOlder: boolean;
@@ -28,6 +31,9 @@ export function MessageList({
   localePreference,
   routeMode,
   currentUserId,
+  currentUserRoleIds,
+  guildRoles,
+  guildChannels,
   activeGuildChannelPermissions,
   onLoadOlder,
   canLoadOlder,
@@ -65,6 +71,9 @@ export function MessageList({
               localePreference={localePreference}
               routeMode={routeMode}
               currentUserId={currentUserId}
+              currentUserRoleIds={currentUserRoleIds}
+              guildRoles={guildRoles}
+              guildChannels={guildChannels}
               activeGuildChannelPermissions={activeGuildChannelPermissions}
               isDeleting={deletingMessageIds.includes(message.id)}
               onOpenProfile={onOpenProfile}

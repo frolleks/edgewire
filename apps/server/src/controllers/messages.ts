@@ -1,16 +1,20 @@
 import { ChannelType } from "@discord/types";
 import type { BunRequest } from "bun";
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "../db";
-import { messageAttachments, messages, uploadSessions } from "../db/schema";
+import { channelReads, messageAttachments, messageMentions, messages, uploadSessions } from "../db/schema";
 import { badRequest, empty, forbidden, json, notFound, parseJson, requireAuth } from "../http";
+import { emitBadgeUpdatesForUsers } from "../lib/badges";
+import { getDmNotificationSettings, getGuildNotificationSettings, resolveMentionsForChannel } from "../lib/mentions";
 import { PermissionBits } from "../lib/permissions";
 import { hasChannelPermission } from "../lib/permission-service";
 import {
+  buildMessageMentionContext,
   canAccessChannel,
   createMessageSchema,
   editMessageSchema,
   emitToChannelAudience,
+  emitToUsers,
   listChannelMessages,
   listMessageAttachmentPayloads,
   makeMessagePayload,
@@ -102,6 +106,46 @@ export const createChannelMessage = async (request: BunRequest<"/api/channels/:c
   }
 
   const content = parsed.data.content?.trim() ?? "";
+  const mentionResolution = await resolveMentionsForChannel({
+    channel: access.channel,
+    authorId: me.id,
+    content,
+    allowedMentions: parsed.data.allowed_mentions,
+  });
+  const recipientUserIds = mentionResolution.audienceUserIds.filter(userId => userId !== me.id);
+  const directMentionSet = new Set(mentionResolution.directMentionUserIds);
+  const roleMentionSet = new Set(mentionResolution.roleMentionUserIds);
+  const everyoneMentionSet = new Set(mentionResolution.everyoneMentionUserIds);
+
+  const notificationSettings =
+    access.scope === "DM"
+      ? await getDmNotificationSettings(recipientUserIds, channelId)
+      : await getGuildNotificationSettings(recipientUserIds, access.channel.guildId!, channelId);
+
+  const mentionByRecipient = new Map<string, boolean>();
+  const notifyByRecipient = new Map<string, boolean>();
+  for (const recipientId of recipientUserIds) {
+    const settings = notificationSettings.get(recipientId) ?? {
+      level: access.scope === "DM" ? "ALL_MESSAGES" : "ONLY_MENTIONS",
+      muted: false,
+      suppressEveryone: false,
+    };
+
+    const everyoneMention = everyoneMentionSet.has(recipientId) && !settings.suppressEveryone;
+    const isMentioned = directMentionSet.has(recipientId) || roleMentionSet.has(recipientId) || everyoneMention;
+    mentionByRecipient.set(recipientId, isMentioned);
+
+    let shouldNotify = false;
+    if (!settings.muted) {
+      if (settings.level === "ALL_MESSAGES") {
+        shouldNotify = true;
+      } else if (settings.level === "ONLY_MENTIONS") {
+        shouldNotify = isMentioned;
+      }
+    }
+    notifyByRecipient.set(recipientId, shouldNotify);
+  }
+
   const attachmentUploadIds = [...new Set(parsed.data.attachment_upload_ids ?? [])];
   const now = new Date();
 
@@ -156,6 +200,10 @@ export const createChannelMessage = async (request: BunRequest<"/api/channels/:c
           channelId,
           authorId: me.id,
           content,
+          mentionEveryone: mentionResolution.mentionEveryone,
+          mentionUserIds: mentionResolution.mentionUserIds,
+          mentionRoleIds: mentionResolution.mentionRoleIds,
+          mentionChannelIds: mentionResolution.mentionChannelIds,
         })
         .returning();
 
@@ -165,44 +213,76 @@ export const createChannelMessage = async (request: BunRequest<"/api/channels/:c
 
       createdMessage = created;
 
-      if (orderedUploads.length === 0) {
-        return;
+      if (orderedUploads.length > 0) {
+        createdAttachments = await tx
+          .insert(messageAttachments)
+          .values(
+            orderedUploads.map(upload => ({
+              id: nextId(),
+              messageId: created.id,
+              channelId,
+              uploaderId: me.id,
+              s3Key: upload.s3Key,
+              filename: upload.filename,
+              size: upload.expectedSize ?? 0,
+              contentType: upload.contentType,
+              urlKind: "presigned",
+            })),
+          )
+          .returning();
+
+        const boundRows = await tx
+          .update(uploadSessions)
+          .set({ messageId: created.id })
+          .where(
+            and(
+              eq(uploadSessions.userId, me.id),
+              eq(uploadSessions.kind, "attachment"),
+              eq(uploadSessions.status, "completed"),
+              eq(uploadSessions.channelId, channelId),
+              isNull(uploadSessions.messageId),
+              inArray(uploadSessions.id, orderedUploads.map(upload => upload.id)),
+            ),
+          )
+          .returning({ id: uploadSessions.id });
+
+        if (boundRows.length !== orderedUploads.length) {
+          throw new Error("One or more attachment uploads were already consumed.");
+        }
       }
 
-      createdAttachments = await tx
-        .insert(messageAttachments)
-        .values(
-          orderedUploads.map(upload => ({
-            id: nextId(),
+      const mentionedRecipients = recipientUserIds.filter(userId => mentionByRecipient.get(userId));
+      if (mentionedRecipients.length > 0) {
+        await tx.insert(messageMentions).values(
+          mentionedRecipients.map(userId => ({
             messageId: created.id,
             channelId,
-            uploaderId: me.id,
-            s3Key: upload.s3Key,
-            filename: upload.filename,
-            size: upload.expectedSize ?? 0,
-            contentType: upload.contentType,
-            urlKind: "presigned",
+            guildId: access.channel.guildId ?? null,
+            mentionedUserId: userId,
           })),
-        )
-        .returning();
+        );
+      }
 
-      const boundRows = await tx
-        .update(uploadSessions)
-        .set({ messageId: created.id })
-        .where(
-          and(
-            eq(uploadSessions.userId, me.id),
-            eq(uploadSessions.kind, "attachment"),
-            eq(uploadSessions.status, "completed"),
-            eq(uploadSessions.channelId, channelId),
-            isNull(uploadSessions.messageId),
-            inArray(uploadSessions.id, orderedUploads.map(upload => upload.id)),
-          ),
-        )
-        .returning({ id: uploadSessions.id });
-
-      if (boundRows.length !== orderedUploads.length) {
-        throw new Error("One or more attachment uploads were already consumed.");
+      for (const recipientId of recipientUserIds) {
+        const mentionIncrement = mentionByRecipient.get(recipientId) ? 1 : 0;
+        await tx
+          .insert(channelReads)
+          .values({
+            userId: recipientId,
+            channelId,
+            lastReadMessageId: null,
+            unreadCount: 1,
+            mentionCount: mentionIncrement,
+            updatedAt: new Date(),
+          })
+          .onConflictDoUpdate({
+            target: [channelReads.userId, channelReads.channelId],
+            set: {
+              unreadCount: sql`${channelReads.unreadCount} + 1`,
+              mentionCount: sql`${channelReads.mentionCount} + ${mentionIncrement}`,
+              updatedAt: new Date(),
+            },
+          });
       }
     });
   } catch (error) {
@@ -213,13 +293,30 @@ export const createChannelMessage = async (request: BunRequest<"/api/channels/:c
     return badRequest(request, "Failed to create message.");
   }
 
+  const mentionContext = await buildMessageMentionContext([createdMessage]);
   const payload = makeMessagePayload(
     createdMessage,
     toSummary(me),
     access.channel.guildId ?? null,
     createdAttachments.map(toAttachmentPayload),
+    mentionContext,
   );
-  await emitToChannelAudience(access.channel, "MESSAGE_CREATE", payload);
+  emitToUsers(mentionResolution.audienceUserIds, "MESSAGE_CREATE", payload);
+  await emitBadgeUpdatesForUsers(recipientUserIds, channelId, createdMessage.id);
+
+  for (const recipientId of recipientUserIds) {
+    if (!notifyByRecipient.get(recipientId)) {
+      continue;
+    }
+
+    emitToUsers([recipientId], "NOTIFICATION_CREATE", {
+      channel_id: channelId,
+      guild_id: access.channel.guildId ?? null,
+      message_id: createdMessage.id,
+      author: toSummary(me),
+      mentioned: mentionByRecipient.get(recipientId) ?? false,
+    });
+  }
 
   return json(request, payload, { status: 201 });
 };
@@ -272,25 +369,66 @@ export const updateChannelMessage = async (
     return badRequest(request, "content must be between 1 and 2000 characters.");
   }
 
-  const [updated] = await db
-    .update(messages)
-    .set({
-      content: parsed.data.content,
-      editedAt: new Date(),
-    })
-    .where(and(eq(messages.id, messageId), eq(messages.channelId, channelId)))
-    .returning();
+  const nextContent = parsed.data.content;
+  const mentionResolution = await resolveMentionsForChannel({
+    channel: access.channel,
+    authorId: me.id,
+    content: nextContent,
+    allowedMentions: parsed.data.allowed_mentions,
+  });
+  const mentionRecipients = [...new Set([
+    ...mentionResolution.directMentionUserIds,
+    ...mentionResolution.roleMentionUserIds,
+    ...mentionResolution.everyoneMentionUserIds,
+  ])];
+
+  let updated: typeof messages.$inferSelect | null = null;
+  await db.transaction(async tx => {
+    const [next] = await tx
+      .update(messages)
+      .set({
+        content: nextContent,
+        editedAt: new Date(),
+        mentionEveryone: mentionResolution.mentionEveryone,
+        mentionUserIds: mentionResolution.mentionUserIds,
+        mentionRoleIds: mentionResolution.mentionRoleIds,
+        mentionChannelIds: mentionResolution.mentionChannelIds,
+      })
+      .where(and(eq(messages.id, messageId), eq(messages.channelId, channelId)))
+      .returning();
+
+    if (!next) {
+      return;
+    }
+
+    updated = next;
+
+    await tx.delete(messageMentions).where(and(eq(messageMentions.messageId, messageId), eq(messageMentions.channelId, channelId)));
+
+    if (mentionRecipients.length > 0) {
+      await tx.insert(messageMentions).values(
+        mentionRecipients.map(userId => ({
+          messageId,
+          channelId,
+          guildId: access.channel.guildId ?? null,
+          mentionedUserId: userId,
+        })),
+      );
+    }
+  });
 
   if (!updated) {
     return notFound(request);
   }
 
   const attachmentsByMessage = await listMessageAttachmentPayloads([updated.id]);
+  const mentionContext = await buildMessageMentionContext([updated]);
   const payload = makeMessagePayload(
     updated,
     toSummary(me),
     access.channel.guildId ?? null,
     attachmentsByMessage.get(updated.id) ?? [],
+    mentionContext,
   );
   await emitToChannelAudience(access.channel, "MESSAGE_UPDATE", payload);
   return json(request, payload);

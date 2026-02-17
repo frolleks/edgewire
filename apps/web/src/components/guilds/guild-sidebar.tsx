@@ -16,6 +16,7 @@ type GuildSidebarProps = {
   guildId: string | null;
   activeGuild: Guild | null;
   channels: GuildChannelPayload[];
+  channelBadges: Map<string, { unread_count: number; mention_count: number }>;
   activeChannelId: string | null;
   canManageGuild: boolean;
   canLeaveGuild: boolean;
@@ -33,6 +34,7 @@ export function GuildSidebar({
   guildId,
   activeGuild,
   channels,
+  channelBadges,
   activeChannelId,
   canManageGuild,
   canLeaveGuild,
@@ -136,6 +138,7 @@ export function GuildSidebar({
       <GuildChannelTree
         guildId={guildId ?? ""}
         channels={channels}
+        channelBadges={channelBadges}
         activeChannelId={activeChannelId}
         canManageChannels={canManageChannels}
         onOpenChannel={onOpenChannel}
