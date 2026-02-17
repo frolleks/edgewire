@@ -108,6 +108,24 @@ const dedupeChronological = (messages: MessagePayload[]): MessagePayload[] => {
   return next;
 };
 
+const dedupeById = <T extends { id: string }>(items: T[]): T[] => {
+  const indexById = new Map<string, number>();
+  const next: T[] = [];
+
+  for (const item of items) {
+    const existingIndex = indexById.get(item.id);
+    if (existingIndex === undefined) {
+      indexById.set(item.id, next.length);
+      next.push(item);
+      continue;
+    }
+
+    next[existingIndex] = item;
+  }
+
+  return next;
+};
+
 const byPositionThenId = (a: GuildChannelPayload, b: GuildChannelPayload): number => {
   if (a.position !== b.position) {
     return a.position - b.position;
@@ -469,9 +487,18 @@ const ChatApp = () => {
     enabled: search.trim().length >= 2,
   });
 
-  const dmChannels = dmChannelsQuery.data ?? [];
-  const guilds = guildsQuery.data ?? [];
-  const guildChannels = guildChannelsQuery.data ?? [];
+  const dmChannels = useMemo(
+    () => dedupeById(dmChannelsQuery.data ?? []),
+    [dmChannelsQuery.data],
+  );
+  const guilds = useMemo(
+    () => dedupeById(guildsQuery.data ?? []),
+    [guildsQuery.data],
+  );
+  const guildChannels = useMemo(
+    () => dedupeById(guildChannelsQuery.data ?? []).sort(byPositionThenId),
+    [guildChannelsQuery.data],
+  );
   const guildPermissions = parsePermissions(guildPermissionsQuery.data?.permissions);
   const myGuildRoleIds = guildPermissionsQuery.data?.role_ids ?? [];
   const hasGuildPermission = (bit: bigint): boolean =>
@@ -949,33 +976,6 @@ const ChatApp = () => {
                     <Button size="sm" variant="outline" onClick={() => setSettingsOpen(true)}>
                       Settings
                     </Button>
-                  ) : null}
-                  {canManageChannels ? (
-                    <>
-                      <Button
-                        size="icon-xs"
-                        variant="outline"
-                        onClick={() => {
-                          setCreateChannelType("4");
-                          setCreateChannelParentId("none");
-                          setCreateChannelOpen(true);
-                        }}
-                        aria-label="Create category"
-                      >
-                        <Plus />
-                      </Button>
-                      <Button
-                        size="icon-xs"
-                        variant="outline"
-                        onClick={() => {
-                          setCreateChannelType("0");
-                          setCreateChannelOpen(true);
-                        }}
-                        aria-label="Create text channel"
-                      >
-                        <Plus />
-                      </Button>
-                    </>
                   ) : null}
                 </div>
               </div>

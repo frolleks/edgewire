@@ -68,6 +68,24 @@ const roleSortDesc = (a: Role, b: Role): number => {
   return a.id.localeCompare(b.id);
 };
 
+const dedupeById = <T extends { id: string }>(items: T[]): T[] => {
+  const indexById = new Map<string, number>();
+  const next: T[] = [];
+
+  for (const item of items) {
+    const existingIndex = indexById.get(item.id);
+    if (existingIndex === undefined) {
+      indexById.set(item.id, next.length);
+      next.push(item);
+      continue;
+    }
+
+    next[existingIndex] = item;
+  }
+
+  return next;
+};
+
 const makeRoleDraft = (role: Role): RoleDraft => ({
   name: role.name,
   permissions: role.permissions,
@@ -139,7 +157,7 @@ export const GuildSettingsModal = ({
     mutationFn: () => api.createGuildRole(guildId!, {}),
     onSuccess: createdRole => {
       queryClient.setQueryData<Role[]>(queryKeys.guildRoles(guildId!), old =>
-        [...(old ?? []), createdRole].sort(roleSortDesc),
+        dedupeById([...(old ?? []), createdRole]).sort(roleSortDesc),
       );
       setSelectedRoleId(createdRole.id);
       toast.success("Role created.");
@@ -213,10 +231,16 @@ export const GuildSettingsModal = ({
   });
 
   const guild = guildSettingsQuery.data;
-  const roles = useMemo(() => [...(rolesQuery.data ?? [])].sort(roleSortDesc), [rolesQuery.data]);
+  const roles = useMemo(
+    () => dedupeById([...(rolesQuery.data ?? [])]).sort(roleSortDesc),
+    [rolesQuery.data],
+  );
   const roleById = useMemo(() => new Map(roles.map(role => [role.id, role])), [roles]);
   const members = guildMembersQuery.data ?? [];
-  const textChannels = channels.filter(channel => channel.type === ChannelType.GUILD_TEXT);
+  const textChannels = useMemo(
+    () => dedupeById(channels).filter(channel => channel.type === ChannelType.GUILD_TEXT),
+    [channels],
+  );
 
   const selectedRole =
     (selectedRoleId ? roles.find(role => role.id === selectedRoleId) : null) ?? roles[0] ?? null;

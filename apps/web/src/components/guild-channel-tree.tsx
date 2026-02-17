@@ -175,25 +175,23 @@ const SortableChannelRow = ({
   };
 
   return (
-    <button
+    <div
       ref={sortable.setNodeRef}
       style={style}
-      type="button"
-      onClick={onOpen}
       className={`${indent ? "ml-4" : ""} w-full flex items-center justify-between gap-2 rounded-md px-2 py-1.5 ${
         active ? "bg-accent" : "hover:bg-accent"
       } ${sortable.isOver ? "ring-1 ring-primary" : ""}`}
     >
-      <span className="flex items-center gap-2 truncate">
+      <button type="button" onClick={onOpen} className="min-w-0 flex flex-1 items-center gap-2 text-left">
         <span>#</span>
         <span className="truncate">{channel.name}</span>
-      </span>
+      </button>
       <DragHandle
         attributes={sortable.attributes as unknown as Record<string, unknown>}
         listeners={sortable.listeners as Record<string, unknown>}
         disabled={!canManageChannels}
       />
-    </button>
+    </div>
   );
 };
 
@@ -328,10 +326,28 @@ export const GuildChannelTree = ({
 }: ChannelTreeProps) => {
   const [localChannels, setLocalChannels] = useState(channels);
   const [collapsedCategories, setCollapsedCategories] = useState<Record<string, boolean>>({});
+  const [createMenu, setCreateMenu] = useState<{ x: number; y: number } | null>(null);
 
   useEffect(() => {
     setLocalChannels(channels);
   }, [channels]);
+
+  useEffect(() => {
+    if (!createMenu) {
+      return;
+    }
+
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === "Escape") {
+        setCreateMenu(null);
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [createMenu]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -378,24 +394,24 @@ export const GuildChannelTree = ({
   };
 
   return (
-    <div className="flex-1 overflow-y-auto px-2 pb-2 pt-2 space-y-2" data-guild-id={guildId}>
-      <div className="px-2 flex items-center justify-between">
+    <div
+      className="flex-1 overflow-y-auto px-2 pb-2 pt-2 space-y-2"
+      data-guild-id={guildId}
+      onContextMenu={event => {
+        if (!canManageChannels) {
+          return;
+        }
+
+        event.preventDefault();
+        const menuWidth = 196;
+        const menuHeight = 92;
+        const x = Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8));
+        const y = Math.max(8, Math.min(event.clientY, window.innerHeight - menuHeight - 8));
+        setCreateMenu({ x, y });
+      }}
+    >
+      <div className="px-2">
         <p className="text-xs uppercase tracking-wide">Channels</p>
-        {canManageChannels ? (
-          <div className="flex items-center gap-1">
-            <Button size="icon-xs" variant="outline" onClick={onCreateCategory} aria-label="Create category">
-              <Plus />
-            </Button>
-            <Button
-              size="icon-xs"
-              variant="outline"
-              onClick={() => onCreateChannel(null)}
-              aria-label="Create text channel"
-            >
-              <Plus />
-            </Button>
-          </div>
-        ) : null}
       </div>
 
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
@@ -468,7 +484,51 @@ export const GuildChannelTree = ({
       </DndContext>
 
       {channels.length === 0 ? <p className="px-2 text-sm">No channels yet.</p> : null}
-      {canManageChannels ? <p className="px-2 text-[11px]">Drag channels to reorder or move between categories.</p> : null}
+      {canManageChannels ? (
+        <p className="px-2 text-[11px]">Right-click to create channels. Drag channels to reorder or move between categories.</p>
+      ) : null}
+
+      {createMenu && canManageChannels ? (
+        <>
+          <button
+            type="button"
+            className="fixed inset-0 z-40 cursor-default"
+            aria-label="Close channel creation menu"
+            onClick={() => setCreateMenu(null)}
+            onContextMenu={event => event.preventDefault()}
+          />
+          <div
+            role="menu"
+            aria-label="Create channel menu"
+            className="fixed z-50 w-48 rounded-md border bg-card p-1 shadow-md"
+            style={{ left: createMenu.x, top: createMenu.y }}
+            onContextMenu={event => event.preventDefault()}
+          >
+            <button
+              type="button"
+              role="menuitem"
+              className="w-full rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent"
+              onClick={() => {
+                setCreateMenu(null);
+                onCreateCategory();
+              }}
+            >
+              Create Category
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              className="w-full rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent"
+              onClick={() => {
+                setCreateMenu(null);
+                onCreateChannel(null);
+              }}
+            >
+              Create Text Channel
+            </button>
+          </div>
+        </>
+      ) : null}
     </div>
   );
 };
