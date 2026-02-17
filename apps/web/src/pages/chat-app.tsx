@@ -47,7 +47,7 @@ import ProfileDialog from "@/components/profile/profile-dialog";
 import ProfileSettingsModal from "@/components/profile/profile-settings-modal";
 import GuildSettingsModal from "@/components/guild-settings-modal";
 import MemberList from "@/components/members/member-list";
-import VoiceChannelView from "@/components/voice/voice-channel-view";
+import VoiceFullscreenView from "@/components/voice/fullscreen/voice-fullscreen-view";
 import { getDisplayInitial } from "@/components/utils/format";
 import { applyChannelBulkPatch } from "@/components/utils/channel-patch";
 import { dedupeById, dedupeChronological } from "@/components/utils/dedupe";
@@ -866,8 +866,7 @@ export function ChatApp() {
     if (
       isGuildVoiceChannel &&
       route.guildId &&
-      previousPhase !== "idle" &&
-      currentPhase === "idle"
+      (currentPhase === "leaving" || (previousPhase !== "idle" && currentPhase === "idle"))
     ) {
       const fallbackTextChannelId =
         lastTextChannelByGuild[route.guildId] ??
@@ -1833,16 +1832,17 @@ export function ChatApp() {
         <main className="relative flex h-full min-h-0 flex-col bg-background">
           {isGuildVoiceChannel ? (
             route.guildId && activeGuildChannel ? (
-              <VoiceChannelView
+              <VoiceFullscreenView
                 guildId={route.guildId}
-                channel={activeGuildChannel}
-                me={me}
+                channelId={activeGuildChannel.id}
+                channelName={activeGuildChannel.name}
                 voice={voice}
+                selfUser={me}
                 canConnect={hasPermission(
                   activeGuildChannelPermissions,
                   PermissionBits.CONNECT,
                 )}
-                onBack={() => {
+                onBackToTextChannel={() => {
                   const fallbackTextChannelId =
                     lastTextChannelByGuild[route.guildId!] ??
                     guildChannels.find(
@@ -1855,7 +1855,6 @@ export function ChatApp() {
                   }
                 }}
                 onOpenChannelsOverlay={() => setVoiceChannelsOverlayOpen(true)}
-                onOpenProfile={openProfile}
               />
             ) : null
           ) : activeMessageChannelId ? (

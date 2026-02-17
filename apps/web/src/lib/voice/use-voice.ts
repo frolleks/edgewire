@@ -20,14 +20,15 @@ type VoiceState = {
   roomId: string | null;
   channelId: string | null;
   channelName: string | null;
-  lastDisconnectedChannelId: string | null;
   joiningChannelId: string | null;
   selfSocketId: string | null;
   selfMute: boolean;
   selfDeaf: boolean;
   screenSharing: boolean;
+  localAudioStream: MediaStream | null;
   localScreenStream: MediaStream | null;
   peers: Record<string, VoicePeer>;
+  remoteAudioStreams: Record<string, MediaStream>;
   screenStreams: Record<string, MediaStream>;
   status: VoiceConnectionStatus;
 };
@@ -57,14 +58,15 @@ const emptyVoiceState: VoiceState = {
   roomId: null,
   channelId: null,
   channelName: null,
-  lastDisconnectedChannelId: null,
   joiningChannelId: null,
   selfSocketId: null,
   selfMute: false,
   selfDeaf: false,
   screenSharing: false,
+  localAudioStream: null,
   localScreenStream: null,
   peers: {},
+  remoteAudioStreams: {},
   screenStreams: {},
   status: createStatus("idle"),
 };
@@ -141,6 +143,19 @@ export const useVoice = () => {
     audio.srcObject = stream;
     audio.muted = state.selfDeaf;
     void audio.play().catch(() => undefined);
+
+    setState(current => {
+      if (current.remoteAudioStreams[peerSocketId] === stream) {
+        return current;
+      }
+      return {
+        ...current,
+        remoteAudioStreams: {
+          ...current.remoteAudioStreams,
+          [peerSocketId]: stream,
+        },
+      };
+    });
   }, [state.selfDeaf]);
 
   const clearRemotePeer = useCallback((peerSocketId: string): void => {
@@ -153,15 +168,18 @@ export const useVoice = () => {
 
     setState(current => {
       const nextPeers = { ...current.peers };
+      const nextRemoteAudios = { ...current.remoteAudioStreams };
       const nextScreens = { ...current.screenStreams };
       const nextPeerStatuses = { ...current.status.peers.bySocketId };
       delete nextPeers[peerSocketId];
+      delete nextRemoteAudios[peerSocketId];
       delete nextScreens[peerSocketId];
       delete nextPeerStatuses[peerSocketId];
 
       return {
         ...current,
         peers: nextPeers,
+        remoteAudioStreams: nextRemoteAudios,
         screenStreams: nextScreens,
         status: {
           ...current.status,
@@ -211,7 +229,6 @@ export const useVoice = () => {
   }, []);
 
   const leave = useCallback(() => {
-    const disconnectedChannelId = state.channelId;
     joinAttemptIdRef.current += 1;
     setState(current => ({
       ...current,
@@ -248,10 +265,9 @@ export const useVoice = () => {
 
     setState({
       ...emptyVoiceState,
-      lastDisconnectedChannelId: disconnectedChannelId,
       status: createStatus("idle"),
     });
-  }, [state.channelId]);
+  }, []);
 
   const connect = useCallback(async (tokenData: VoiceTokenResponse, input: JoinVoiceInput, joinAttemptId: number): Promise<void> => {
     const webrtc = new WebRtcMesh({
@@ -350,6 +366,7 @@ export const useVoice = () => {
           setState(current => ({
             ...current,
             peers: {},
+            remoteAudioStreams: {},
             screenStreams: {},
             localScreenStream: null,
             status: {
@@ -529,7 +546,6 @@ export const useVoice = () => {
       ...current,
       channelId: input.channelId,
       channelName: input.channelName,
-      lastDisconnectedChannelId: null,
       joiningChannelId: input.channelId,
       status: {
         ...createStatus("requesting_token"),
@@ -592,6 +608,7 @@ export const useVoice = () => {
         webRtcRef.current?.setLocalAudioTrack(track, micResult.stream);
         setState(current => ({
           ...current,
+          localAudioStream: micResult.stream,
           status: {
             ...current.status,
             media: {
@@ -606,6 +623,7 @@ export const useVoice = () => {
       localAudioStreamRef.current = null;
       setState(current => ({
         ...current,
+        localAudioStream: null,
         status: {
           ...current.status,
           media: {
@@ -649,6 +667,7 @@ export const useVoice = () => {
       webRtcRef.current?.setLocalAudioTrack(track, stream);
       setState(current => ({
         ...current,
+        localAudioStream: stream,
         status: {
           ...current.status,
           media: {
@@ -661,6 +680,7 @@ export const useVoice = () => {
     } catch (error) {
       setState(current => ({
         ...current,
+        localAudioStream: null,
         status: {
           ...current.status,
           media: {

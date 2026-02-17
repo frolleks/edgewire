@@ -42,10 +42,7 @@ export function VoiceChannelView({
       return;
     }
 
-    if (
-      voice.status.phase === "idle" &&
-      voice.lastDisconnectedChannelId === channel.id
-    ) {
+    if (voice.status.phase === "leaving") {
       return;
     }
 
@@ -63,7 +60,6 @@ export function VoiceChannelView({
     voice.connected,
     voice.joinGuildVoice,
     voice.joiningChannelId,
-    voice.lastDisconnectedChannelId,
     voice.status.phase,
   ]);
 
