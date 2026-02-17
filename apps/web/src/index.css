@@ -1,0 +1,28 @@
+@import url("https://rsms.me/inter/inter.css");
+@import "../styles/globals.css";
+
+@layer base {
+  :root {
+    font-family: "Inter", "Segoe UI", sans-serif;
+  }
+
+  body {
+    @apply m-0 min-h-screen;
+    background:
+      radial-gradient(
+        circle at 10% 10%,
+        rgba(67, 56, 202, 0.25) 0%,
+        transparent 35%
+      ),
+      radial-gradient(
+        circle at 80% 80%,
+        rgba(30, 64, 175, 0.2) 0%,
+        transparent 40%
+      ),
+      linear-gradient(180deg, #0b1120 0%, #020617 100%);
+  }
+
+  #root {
+    @apply min-h-screen;
+  }
+}
