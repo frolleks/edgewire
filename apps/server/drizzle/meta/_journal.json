@@ -50,6 +50,13 @@
       "when": 1771488000000,
       "tag": "0006_presence",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1771574400000,
+      "tag": "0007_voice",
+      "breakpoints": true
     }
   ]
 }

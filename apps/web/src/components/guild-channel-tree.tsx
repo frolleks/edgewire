@@ -18,7 +18,7 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { ChevronDown, ChevronRight, GripVertical, Plus } from "lucide-react";
+import { ChevronDown, ChevronRight, GripVertical, Loader2, Plus, Volume2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 
@@ -29,6 +29,13 @@ type ChannelTreeProps = {
   activeChannelId: string | null;
   canManageChannels: boolean;
   onOpenChannel: (channelId: string) => void;
+  onJoinVoiceChannel?: (channelId: string, channelName: string) => void;
+  activeVoiceChannelId?: string | null;
+  joiningVoiceChannelId?: string | null;
+  voiceParticipantsByChannelId?: Record<
+    string,
+    Array<{ socket_id: string; id: string; display_name: string; presence_status?: string }>
+  >;
   onCreateCategory: () => void;
   onCreateChannel: (parentId: string | null) => void;
   onReorder: (
@@ -62,7 +69,11 @@ const buildGuildTree = (guildChannels: GuildChannelPayload[]): TreeGroup[] => {
     .sort(byPositionThenId);
 
   const textChannels = guildChannels
-    .filter((channel) => channel.type === ChannelType.GUILD_TEXT)
+    .filter(
+      (channel) =>
+        channel.type === ChannelType.GUILD_TEXT ||
+        channel.type === ChannelType.GUILD_VOICE,
+    )
     .sort(byPositionThenId);
 
   const byParent = new Map<string | null, GuildChannelPayload[]>();
@@ -91,6 +102,13 @@ const isCategoryId = (id: string): boolean => id.startsWith("category:");
 const isChannelId = (id: string): boolean => id.startsWith("channel:");
 const fromCategoryId = (id: string): string => id.replace(/^category:/, "");
 const fromChannelId = (id: string): string => id.replace(/^channel:/, "");
+
+const presenceDotClassName = (status?: string): string => {
+  if (status === "online") return "bg-green-500";
+  if (status === "idle") return "bg-yellow-500";
+  if (status === "dnd") return "bg-red-500";
+  return "bg-muted-foreground/50";
+};
 
 const DragHandle = ({
   attributes,
@@ -192,6 +210,10 @@ const SortableChannelRow = ({
   badge,
   active,
   onOpen,
+  onJoinVoiceChannel,
+  activeVoiceChannelId,
+  joiningVoiceChannelId,
+  voiceParticipants,
   indent = false,
   canManageChannels,
 }: {
@@ -199,6 +221,10 @@ const SortableChannelRow = ({
   badge?: { unread_count: number; mention_count: number };
   active: boolean;
   onOpen: () => void;
+  onJoinVoiceChannel?: (channelId: string, channelName: string) => void;
+  activeVoiceChannelId?: string | null;
+  joiningVoiceChannelId?: string | null;
+  voiceParticipants?: Array<{ socket_id: string; id: string; display_name: string; presence_status?: string }>;
   indent?: boolean;
   canManageChannels: boolean;
 }) => {
@@ -212,35 +238,69 @@ const SortableChannelRow = ({
   };
   const mentionCount = badge?.mention_count ?? 0;
   const unreadCount = badge?.unread_count ?? 0;
+  const isVoice = channel.type === ChannelType.GUILD_VOICE;
+  const isVoiceConnected = isVoice && activeVoiceChannelId === channel.id;
+  const isVoiceJoining = isVoice && joiningVoiceChannelId === channel.id && !isVoiceConnected;
+  const uniqueVoiceParticipants = voiceParticipants
+    ? [...new Map(voiceParticipants.map((participant) => [participant.id, participant])).values()]
+    : [];
 
   return (
     <div
       ref={sortable.setNodeRef}
       style={style}
-      className={`w-full flex items-center justify-between gap-2 rounded-md px-2 py-1.5 ${
+      className={`w-full rounded-md px-2 py-1.5 ${
         active ? "bg-accent" : "hover:bg-accent"
       } ${sortable.isOver ? "ring-1 ring-primary" : ""}`}
     >
-      <button
-        type="button"
-        onClick={onOpen}
-        className="min-w-0 flex flex-1 items-center gap-2 text-left"
-      >
-        <span>#</span>
-        <span className="truncate">{channel.name}</span>
-      </button>
-      {mentionCount > 0 ? (
-        <span className="min-w-5 rounded-full bg-destructive px-1.5 py-0.5 text-center text-[10px] font-semibold text-destructive-foreground">
-          {mentionCount > 99 ? "99+" : mentionCount}
-        </span>
-      ) : unreadCount > 0 ? (
-        <span className="h-2 w-2 rounded-full bg-primary" />
+      <div className="w-full flex items-center justify-between gap-2">
+        <button
+          type="button"
+          onClick={() => {
+            if (isVoice && onJoinVoiceChannel) {
+              onJoinVoiceChannel(channel.id, channel.name);
+              return;
+            }
+            onOpen();
+          }}
+          className="min-w-0 flex flex-1 items-center gap-2 text-left"
+        >
+          <span>
+            {isVoice ? (
+              isVoiceJoining ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Volume2 className="h-3.5 w-3.5" />
+              )
+            ) : (
+              "#"
+            )}
+          </span>
+          <span className="truncate">{channel.name}</span>
+        </button>
+        {mentionCount > 0 ? (
+          <span className="min-w-5 rounded-full bg-destructive px-1.5 py-0.5 text-center text-[10px] font-semibold text-destructive-foreground">
+            {mentionCount > 99 ? "99+" : mentionCount}
+          </span>
+        ) : unreadCount > 0 ? (
+          <span className="h-2 w-2 rounded-full bg-primary" />
+        ) : null}
+        <DragHandle
+          attributes={sortable.attributes as unknown as Record<string, unknown>}
+          listeners={sortable.listeners as Record<string, unknown>}
+          disabled={!canManageChannels}
+        />
+      </div>
+      {isVoice && uniqueVoiceParticipants.length > 0 ? (
+        <div className="pt-1 pl-5 text-xs text-muted-foreground flex flex-wrap gap-x-2 gap-y-1">
+          {uniqueVoiceParticipants.map((participant) => (
+            <span key={participant.socket_id} className="inline-flex items-center gap-1">
+              <span className={`h-1.5 w-1.5 rounded-full ${presenceDotClassName(participant.presence_status)}`} />
+              <span className="truncate">{participant.display_name}</span>
+            </span>
+          ))}
+        </div>
       ) : null}
-      <DragHandle
-        attributes={sortable.attributes as unknown as Record<string, unknown>}
-        listeners={sortable.listeners as Record<string, unknown>}
-        disabled={!canManageChannels}
-      />
     </div>
   );
 };
@@ -287,7 +347,9 @@ const applyChannelMove = (
 ): GuildChannelPayload[] => {
   const activeChannel = channels.find(
     (channel) =>
-      channel.id === activeChannelId && channel.type === ChannelType.GUILD_TEXT,
+      channel.id === activeChannelId &&
+      (channel.type === ChannelType.GUILD_TEXT ||
+        channel.type === ChannelType.GUILD_VOICE),
   );
   if (!activeChannel) {
     return channels;
@@ -300,7 +362,8 @@ const applyChannelMove = (
     const overChannel = channels.find(
       (channel) =>
         channel.id === fromChannelId(overId) &&
-        channel.type === ChannelType.GUILD_TEXT,
+        (channel.type === ChannelType.GUILD_TEXT ||
+          channel.type === ChannelType.GUILD_VOICE),
     );
     if (!overChannel) {
       return channels;
@@ -309,7 +372,8 @@ const applyChannelMove = (
     const siblings = channels
       .filter(
         (channel) =>
-          channel.type === ChannelType.GUILD_TEXT &&
+          (channel.type === ChannelType.GUILD_TEXT ||
+            channel.type === ChannelType.GUILD_VOICE) &&
           channel.parent_id === targetParentId &&
           channel.id !== activeChannel.id,
       )
@@ -326,7 +390,8 @@ const applyChannelMove = (
   const siblings = channels
     .filter(
       (channel) =>
-        channel.type === ChannelType.GUILD_TEXT &&
+        (channel.type === ChannelType.GUILD_TEXT ||
+          channel.type === ChannelType.GUILD_VOICE) &&
         channel.parent_id === targetParentId &&
         channel.id !== activeChannel.id,
     )
@@ -356,7 +421,8 @@ const applyChannelMove = (
   const currentParentSiblings = channels
     .filter(
       (channel) =>
-        channel.type === ChannelType.GUILD_TEXT &&
+        (channel.type === ChannelType.GUILD_TEXT ||
+          channel.type === ChannelType.GUILD_VOICE) &&
         channel.parent_id === activeChannel.parent_id &&
         channel.id !== activeChannel.id &&
         channel.parent_id !== targetParentId,
@@ -369,7 +435,10 @@ const applyChannelMove = (
   );
 
   return channels.map((channel) => {
-    if (channel.type !== ChannelType.GUILD_TEXT) {
+    if (
+      channel.type !== ChannelType.GUILD_TEXT &&
+      channel.type !== ChannelType.GUILD_VOICE
+    ) {
       return channel;
     }
 
@@ -390,6 +459,7 @@ const toBulkPayload = (channels: GuildChannelPayload[]) =>
     .filter(
       (channel) =>
         channel.type === ChannelType.GUILD_TEXT ||
+        channel.type === ChannelType.GUILD_VOICE ||
         channel.type === ChannelType.GUILD_CATEGORY,
     )
     .map((channel) => ({
@@ -405,6 +475,10 @@ export const GuildChannelTree = ({
   activeChannelId,
   canManageChannels,
   onOpenChannel,
+  onJoinVoiceChannel,
+  activeVoiceChannelId,
+  joiningVoiceChannelId,
+  voiceParticipantsByChannelId,
   onCreateCategory,
   onCreateChannel,
   onReorder,
@@ -554,6 +628,10 @@ export const GuildChannelTree = ({
                       badge={channelBadges.get(channel.id)}
                       active={activeChannelId === channel.id}
                       onOpen={() => onOpenChannel(channel.id)}
+                      onJoinVoiceChannel={onJoinVoiceChannel}
+                      activeVoiceChannelId={activeVoiceChannelId}
+                      joiningVoiceChannelId={joiningVoiceChannelId}
+                      voiceParticipants={voiceParticipantsByChannelId?.[channel.id]}
                       canManageChannels={canManageChannels}
                     />
                   ))}
@@ -599,6 +677,10 @@ export const GuildChannelTree = ({
                               badge={channelBadges.get(channel.id)}
                               active={activeChannelId === channel.id}
                               onOpen={() => onOpenChannel(channel.id)}
+                              onJoinVoiceChannel={onJoinVoiceChannel}
+                              activeVoiceChannelId={activeVoiceChannelId}
+                              joiningVoiceChannelId={joiningVoiceChannelId}
+                              voiceParticipants={voiceParticipantsByChannelId?.[channel.id]}
                               indent
                               canManageChannels={canManageChannels}
                             />
@@ -660,6 +742,17 @@ export const GuildChannelTree = ({
               }}
             >
               Create Text Channel
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              className="w-full rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent"
+              onClick={() => {
+                setCreateMenu(null);
+                onCreateChannel("voice-root");
+              }}
+            >
+              Create Voice Channel
             </button>
           </div>
         </>

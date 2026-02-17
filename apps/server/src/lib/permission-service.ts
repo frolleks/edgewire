@@ -193,7 +193,12 @@ export const listVisibleGuildChannelsForUser = async (
   const allChannels = await db
     .select()
     .from(channels)
-    .where(and(eq(channels.guildId, guildId), inArray(channels.type, [ChannelType.GUILD_TEXT, ChannelType.GUILD_CATEGORY])))
+    .where(
+      and(
+        eq(channels.guildId, guildId),
+        inArray(channels.type, [ChannelType.GUILD_TEXT, ChannelType.GUILD_VOICE, ChannelType.GUILD_CATEGORY]),
+      ),
+    )
     .orderBy(asc(channels.position), asc(sql`${channels.id}::bigint`));
 
   const results = await Promise.all(

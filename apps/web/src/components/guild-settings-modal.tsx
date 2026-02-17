@@ -183,7 +183,7 @@ const makeRoleDraft = (role: Role): RoleDraft => ({
   mentionable: role.mentionable,
 });
 
-const groupOrder = ["General", "Text", "Moderation", "Admin"] as const;
+const groupOrder = ["General", "Text", "Voice", "Moderation", "Admin"] as const;
 
 export const GuildSettingsModal = ({
   open,

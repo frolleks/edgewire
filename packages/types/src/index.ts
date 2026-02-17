@@ -1,5 +1,6 @@
 export const ChannelType = {
   GUILD_TEXT: 0,
+  GUILD_VOICE: 2,
   DM: 1,
   GUILD_CATEGORY: 4,
 } as const;
@@ -71,7 +72,7 @@ export interface DmChannelPayload {
 
 export interface GuildChannelPayload {
   id: string;
-  type: 0 | 4;
+  type: 0 | 2 | 4;
   guild_id: string;
   parent_id: string | null;
   name: string;

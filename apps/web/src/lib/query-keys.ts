@@ -10,6 +10,7 @@ export const queryKeys = {
   guildRoles: (guildId: string) => ["guild-roles", guildId] as const,
   guildMembers: (guildId: string, query: string) => ["guild-members", guildId, query] as const,
   guildMember: (guildId: string, userId: string) => ["guild-member", guildId, userId] as const,
+  guildVoiceState: (guildId: string) => ["guild-voice-state", guildId] as const,
   messages: (channelId: string) => ["messages", channelId] as const,
   typing: (channelId: string) => ["typing", channelId] as const,
   usersSearch: (query: string) => ["users-search", query] as const,

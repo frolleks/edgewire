@@ -40,6 +40,22 @@ const toMimeList = (value: string | undefined, fallback: string[]): string[] => 
   return parsed.length > 0 ? parsed : fallback;
 };
 
+const parseIceServers = (value: string | undefined): Array<{ urls: string | string[]; username?: string; credential?: string }> => {
+  if (!value) {
+    return [{ urls: ["stun:stun.l.google.com:19302"] }];
+  }
+
+  try {
+    const parsed = JSON.parse(value) as Array<{ urls: string | string[]; username?: string; credential?: string }>;
+    if (!Array.isArray(parsed) || parsed.length === 0) {
+      return [{ urls: ["stun:stun.l.google.com:19302"] }];
+    }
+    return parsed;
+  } catch {
+    return [{ urls: ["stun:stun.l.google.com:19302"] }];
+  }
+};
+
 export const env = {
   PORT: Number(process.env.PORT ?? 3001),
   DATABASE_URL: get("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/discord_clone_dm"),
@@ -48,6 +64,10 @@ export const env = {
   COOKIE_SECURE: toBool(process.env.COOKIE_SECURE ?? "false"),
   LOG_LEVEL: process.env.LOG_LEVEL ?? "info",
   GATEWAY_TOKEN_TTL_SECONDS: Number(process.env.GATEWAY_TOKEN_TTL_SECONDS ?? 300),
+  VOICE_TOKEN_SECRET: get("VOICE_TOKEN_SECRET", "dev-voice-secret-change-me"),
+  VOICE_INTERNAL_SECRET: get("VOICE_INTERNAL_SECRET", "dev-voice-internal-secret-change-me"),
+  VOICE_WS_URL: get("VOICE_WS_URL", "ws://localhost:3002/ws"),
+  ICE_SERVERS: parseIceServers(getOptional("ICE_SERVERS_JSON")),
   S3_ACCESS_KEY_ID: getEither("S3_ACCESS_KEY_ID", "AWS_ACCESS_KEY_ID"),
   S3_SECRET_ACCESS_KEY: getEither("S3_SECRET_ACCESS_KEY", "AWS_SECRET_ACCESS_KEY"),
   S3_REGION: getEither("S3_REGION", "AWS_REGION"),

@@ -56,7 +56,7 @@ export const guildNameSchema = z.object({
 
 export const createGuildChannelSchema = z.object({
   name: z.string().trim().min(1).max(MAX_NAME_LENGTH),
-  type: z.union([z.literal(0), z.literal(4)]),
+  type: z.union([z.literal(0), z.literal(2), z.literal(4)]),
   parent_id: z.string().trim().min(1).max(32).nullable().optional(),
   position: z.number().int().min(0).max(10_000).optional(),
   topic: z.string().trim().min(0).max(MAX_TOPIC_LENGTH).nullable().optional(),
@@ -358,7 +358,7 @@ export const emitToChannelAudience = async (channel: ChannelRow, event: string, 
   }
 
   if (channel.guildId) {
-    if (channel.type === ChannelType.GUILD_TEXT) {
+    if (channel.type === ChannelType.GUILD_TEXT || channel.type === ChannelType.GUILD_VOICE) {
       const visibleMembers = await listGuildChannelAudienceMemberIds(channel.guildId, channel.id);
       emitToUsers(visibleMembers, event, data);
       return;
@@ -539,7 +539,12 @@ export const toGuildPayload = (guild: GuildRow): PartialGuild => ({
 
 export const toGuildChannelPayload = (channel: ChannelRow): GuildChannelPayload => ({
   id: channel.id,
-  type: channel.type === ChannelType.GUILD_CATEGORY ? ChannelType.GUILD_CATEGORY : ChannelType.GUILD_TEXT,
+  type:
+    channel.type === ChannelType.GUILD_CATEGORY
+      ? ChannelType.GUILD_CATEGORY
+      : channel.type === ChannelType.GUILD_VOICE
+        ? ChannelType.GUILD_VOICE
+        : ChannelType.GUILD_TEXT,
   guild_id: channel.guildId ?? "",
   parent_id: channel.parentId,
   name: channel.name ?? "",
@@ -722,7 +727,12 @@ export const getGuildChannels = async (guildId: string): Promise<GuildChannelPay
   const rows = await db
     .select()
     .from(channels)
-    .where(and(eq(channels.guildId, guildId), inArray(channels.type, [ChannelType.GUILD_TEXT, ChannelType.GUILD_CATEGORY])))
+    .where(
+      and(
+        eq(channels.guildId, guildId),
+        inArray(channels.type, [ChannelType.GUILD_TEXT, ChannelType.GUILD_VOICE, ChannelType.GUILD_CATEGORY]),
+      ),
+    )
     .orderBy(asc(channels.position), asc(sql`${channels.id}::bigint`));
 
   return Promise.all(rows.map(toGuildChannelPayloadWithOverwrites));
@@ -733,7 +743,9 @@ export const getGuildChannelTree = async (
 ): Promise<Array<{ category: GuildChannelPayload | null; channels: GuildChannelPayload[] }>> => {
   const allChannels = await getGuildChannels(guildId);
   const categories = allChannels.filter(channel => channel.type === ChannelType.GUILD_CATEGORY);
-  const textChannels = allChannels.filter(channel => channel.type === ChannelType.GUILD_TEXT);
+  const textChannels = allChannels.filter(
+    channel => channel.type === ChannelType.GUILD_TEXT || channel.type === ChannelType.GUILD_VOICE,
+  );
 
   const grouped = new Map<string | null, GuildChannelPayload[]>();
   for (const channel of textChannels) {
@@ -972,6 +984,7 @@ export const hydrateInvitePayload = async (
       id: channel.id,
       name: channel.name,
       type: channel.type === ChannelType.GUILD_CATEGORY ? ChannelType.GUILD_CATEGORY : ChannelType.GUILD_TEXT,
+
       guild_id: channel.guildId,
       parent_id: channel.parentId,
     },

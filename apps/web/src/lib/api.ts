@@ -86,6 +86,23 @@ export type UploadInitResponse = {
   expires_at: string;
 };
 
+export type VoiceTokenResponse = {
+  token: string;
+  voice_ws_url: string;
+  room_id: string;
+  ice_servers: RTCIceServer[];
+};
+
+export type VoiceChannelParticipant = {
+  socket_id: string;
+  user: UserSummary;
+  self_mute: boolean;
+  self_deaf: boolean;
+  screen_sharing: boolean;
+};
+
+export type GuildVoiceStateMap = Record<string, VoiceChannelParticipant[]>;
+
 export type CompleteUploadResponse =
   | {
       upload_id: string;
@@ -121,6 +138,13 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(body),
     }),
+  getVoiceToken: (body: { kind: "guild" | "dm"; guild_id?: string; channel_id: string }) =>
+    apiFetch<VoiceTokenResponse>("/api/voice/token", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  getGuildVoiceState: (guildId: string) =>
+    apiFetch<GuildVoiceStateMap>(`/api/guilds/${guildId}/voice-state`),
   getBadges: () => apiFetch<BadgesResponse>("/api/badges"),
   patchGuildNotificationSettings: (
     guildId: string,
@@ -214,7 +238,7 @@ export const api = {
     guildId: string,
     payload: {
       name: string;
-      type: 0 | 4;
+      type: 0 | 2 | 4;
       parent_id?: string | null;
       position?: number;
       topic?: string | null;

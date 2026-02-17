@@ -21,6 +21,7 @@ import {
   type DmChannel,
   type Guild,
   type GuildMemberSummary,
+  type GuildVoiceStateMap,
   type PresenceStatus,
   type SelfPresenceStatus,
   type Role,
@@ -673,6 +674,26 @@ export const useGateway = ({ enabled, userId, activeChannelId }: GatewayParams) 
               last_seen_at: string;
             };
             queryClient.setQueryData<SelfPresenceStatus>(presenceQueryKeys.selfPresence, payload.status);
+            break;
+          }
+          case "VOICE_CHANNEL_STATE_UPDATE": {
+            const payload = packet.d as {
+              guild_id: string;
+              channel_id: string;
+              participants: GuildVoiceStateMap[string];
+            };
+            queryClient.setQueryData<GuildVoiceStateMap>(
+              queryKeys.guildVoiceState(payload.guild_id),
+              old => {
+                const next = { ...(old ?? {}) };
+                if (payload.participants.length === 0) {
+                  delete next[payload.channel_id];
+                } else {
+                  next[payload.channel_id] = payload.participants;
+                }
+                return next;
+              },
+            );
             break;
           }
           case "MESSAGE_DELETE": {

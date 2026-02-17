@@ -1,4 +1,4 @@
-import { Users } from "lucide-react";
+import { Phone, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 type ChatHeaderProps = {
@@ -7,6 +7,7 @@ type ChatHeaderProps = {
   dmUsername?: string;
   canCreateInvite: boolean;
   onCreateInvite: () => void;
+  onCall?: () => void;
   showMembersToggle?: boolean;
   onToggleMembers?: () => void;
 };
@@ -17,6 +18,7 @@ export function ChatHeader({
   dmUsername,
   canCreateInvite,
   onCreateInvite,
+  onCall,
   showMembersToggle,
   onToggleMembers,
 }: ChatHeaderProps) {
@@ -45,6 +47,12 @@ export function ChatHeader({
         {canCreateInvite ? (
           <Button variant="outline" size="sm" onClick={onCreateInvite}>
             Create Invite
+          </Button>
+        ) : null}
+        {routeMode === "dm" && onCall ? (
+          <Button variant="outline" size="sm" onClick={onCall}>
+            <Phone className="size-4" />
+            Call
           </Button>
         ) : null}
       </div>

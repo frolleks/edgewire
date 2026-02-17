@@ -44,6 +44,7 @@ import {
 } from "./controllers/roles";
 import { abortUpload, completeUpload, initiateAttachmentUpload, initiateAvatarUpload } from "./controllers/uploads";
 import { searchUsers } from "./controllers/users";
+import { createVoiceTokenEndpoint, getGuildVoiceStateEndpoint, syncGuildVoiceStateEndpoint } from "./controllers/voice";
 import { corsPreflight, methodNotAllowed } from "./http";
 
 type Handler = (request: Request) => Response | Promise<Response>;
@@ -337,6 +338,30 @@ export const routes = {
   },
   "/api/gateway/token": {
     POST: safe(createToken),
+    GET: auth404,
+    PUT: auth404,
+    PATCH: auth404,
+    DELETE: auth404,
+    OPTIONS: corsPreflight,
+  },
+  "/api/voice/token": {
+    POST: safe(createVoiceTokenEndpoint as Handler),
+    GET: auth404,
+    PUT: auth404,
+    PATCH: auth404,
+    DELETE: auth404,
+    OPTIONS: corsPreflight,
+  },
+  "/api/guilds/:guildId/voice-state": {
+    GET: safe(getGuildVoiceStateEndpoint as Handler),
+    POST: auth404,
+    PUT: auth404,
+    PATCH: auth404,
+    DELETE: auth404,
+    OPTIONS: corsPreflight,
+  },
+  "/api/internal/voice/state": {
+    POST: safe(syncGuildVoiceStateEndpoint as Handler),
     GET: auth404,
     PUT: auth404,
     PATCH: auth404,

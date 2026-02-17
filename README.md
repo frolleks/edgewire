@@ -78,7 +78,7 @@ bun run db:studio
 
 ## 6) Run in Development
 
-Single command (server + web):
+Single command (server + web + voice signaling):
 
 ```bash
 bun run dev
@@ -96,9 +96,31 @@ Terminal 2:
 bun run dev:web
 ```
 
+Terminal 3:
+```bash
+bun run dev:voice
+```
+
 Default URLs:
 - Web: `http://localhost:3000`
 - API/Gateway: `http://localhost:3001`
+- Voice signaling WS: `ws://localhost:3002/ws`
+
+### Voice/Screenshare Environment
+
+Set these in `apps/server/.env` (and share the secret with `apps/voice-server/.env`):
+
+- `VOICE_TOKEN_SECRET` - HMAC secret used by API and voice signaling server
+- `VOICE_INTERNAL_SECRET` - shared secret for voice-server -> API internal state sync
+- `VOICE_WS_URL` - signaling websocket URL returned by `/api/voice/token`
+- `ICE_SERVERS_JSON` - JSON array of ICE servers, example:
+
+```json
+[{"urls":["stun:stun.l.google.com:19302"]}]
+```
+
+For production voice/screen reliability, configure TURN (for example coturn) in `ICE_SERVERS_JSON`.
+Also set `API_BASE_URL` and `VOICE_INTERNAL_SECRET` in `apps/voice-server/.env`.
 
 ## 7) Production Build
 

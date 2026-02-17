@@ -15,8 +15,8 @@ import {
 type CreateChannelModalProps = {
   open: boolean;
   onClose: () => void;
-  type: "0" | "4";
-  setType: (value: "0" | "4") => void;
+  type: "0" | "2" | "4";
+  setType: (value: "0" | "2" | "4") => void;
   name: string;
   setName: (value: string) => void;
   parentId: string;
@@ -49,12 +49,13 @@ export function CreateChannelModal({
       <form onSubmit={onSubmit} className="space-y-4">
         <div>
           <Label>Channel Type</Label>
-          <Select value={type} onValueChange={(value) => setType(value as "0" | "4")}>
+          <Select value={type} onValueChange={(value) => setType(value as "0" | "2" | "4")}>
             <SelectTrigger className="w-full mt-2">
               <SelectValue placeholder="Select type" />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="0">Text Channel</SelectItem>
+              <SelectItem value="2">Voice Channel</SelectItem>
               <SelectItem value="4">Category</SelectItem>
             </SelectContent>
           </Select>
@@ -72,7 +73,7 @@ export function CreateChannelModal({
           />
         </div>
 
-        {type === String(ChannelType.GUILD_TEXT) ? (
+        {type === String(ChannelType.GUILD_TEXT) || type === String(ChannelType.GUILD_VOICE) ? (
           <div>
             <Label>Parent Category</Label>
             <Select value={parentId} onValueChange={setParentId}>

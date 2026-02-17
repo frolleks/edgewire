@@ -22,9 +22,16 @@ type GuildSidebarProps = {
   canLeaveGuild: boolean;
   isLeavingGuild: boolean;
   canManageChannels: boolean;
+  activeVoiceChannelId?: string | null;
+  joiningVoiceChannelId?: string | null;
+  voiceParticipantsByChannelId?: Record<
+    string,
+    Array<{ socket_id: string; id: string; display_name: string; presence_status?: string }>
+  >;
   onOpenSettings: () => void;
   onLeaveGuild: () => void;
   onOpenChannel: (channelId: string) => void;
+  onJoinVoiceChannel?: (channelId: string, channelName: string) => void;
   onCreateCategory: () => void;
   onCreateChannel: (parentId: string | null) => void;
   onReorder: (payload: ReorderPayloadItem[]) => Promise<void>;
@@ -40,9 +47,13 @@ export function GuildSidebar({
   canLeaveGuild,
   isLeavingGuild,
   canManageChannels,
+  activeVoiceChannelId,
+  joiningVoiceChannelId,
+  voiceParticipantsByChannelId,
   onOpenSettings,
   onLeaveGuild,
   onOpenChannel,
+  onJoinVoiceChannel,
   onCreateCategory,
   onCreateChannel,
   onReorder,
@@ -142,6 +153,10 @@ export function GuildSidebar({
         activeChannelId={activeChannelId}
         canManageChannels={canManageChannels}
         onOpenChannel={onOpenChannel}
+        onJoinVoiceChannel={onJoinVoiceChannel}
+        activeVoiceChannelId={activeVoiceChannelId}
+        joiningVoiceChannelId={joiningVoiceChannelId}
+        voiceParticipantsByChannelId={voiceParticipantsByChannelId}
         onCreateCategory={onCreateCategory}
         onCreateChannel={onCreateChannel}
         onReorder={onReorder}

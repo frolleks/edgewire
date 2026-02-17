@@ -6,6 +6,8 @@ export const PermissionBits = {
   MANAGE_CHANNELS: 1n << 4n,
   MANAGE_GUILD: 1n << 5n,
   READ_MESSAGE_HISTORY: 1n << 16n,
+  CONNECT: 1n << 20n,
+  SPEAK: 1n << 21n,
   MANAGE_ROLES: 1n << 28n,
   ADMINISTRATOR: 1n << 3n,
 } as const;
@@ -114,4 +116,10 @@ export const computeChannelPermissions = (params: {
 };
 
 export const defaultEveryonePermissions = (): string =>
-  serializePerms(PermissionBits.VIEW_CHANNEL | PermissionBits.SEND_MESSAGES | PermissionBits.READ_MESSAGE_HISTORY);
+  serializePerms(
+    PermissionBits.VIEW_CHANNEL |
+      PermissionBits.SEND_MESSAGES |
+      PermissionBits.READ_MESSAGE_HISTORY |
+      PermissionBits.CONNECT |
+      PermissionBits.SPEAK,
+  );

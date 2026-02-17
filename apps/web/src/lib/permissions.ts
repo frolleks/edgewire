@@ -6,6 +6,8 @@ export const PermissionBits = {
   MANAGE_CHANNELS: 1n << 4n,
   MANAGE_GUILD: 1n << 5n,
   READ_MESSAGE_HISTORY: 1n << 16n,
+  CONNECT: 1n << 20n,
+  SPEAK: 1n << 21n,
   MANAGE_ROLES: 1n << 28n,
   ADMINISTRATOR: 1n << 3n,
 } as const;
@@ -107,6 +109,8 @@ export const permissionChecklist = [
     bit: PermissionBits.READ_MESSAGE_HISTORY,
     group: "Text",
   },
+  { key: "CONNECT", label: "Connect", bit: PermissionBits.CONNECT, group: "Voice" },
+  { key: "SPEAK", label: "Speak", bit: PermissionBits.SPEAK, group: "Voice" },
   { key: "MANAGE_ROLES", label: "Manage Roles", bit: PermissionBits.MANAGE_ROLES, group: "Moderation" },
   { key: "ADMINISTRATOR", label: "Administrator", bit: PermissionBits.ADMINISTRATOR, group: "Admin" },
 ] as const;

@@ -12,7 +12,15 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import type { InfiniteData } from "@tanstack/react-query";
-import { Cog, X } from "lucide-react";
+import {
+  Cog,
+  Headphones,
+  Mic,
+  MicOff,
+  MonitorUp,
+  PhoneOff,
+  X,
+} from "lucide-react";
 import {
   type ChangeEvent,
   type FormEvent,
@@ -39,6 +47,7 @@ import ProfileDialog from "@/components/profile/profile-dialog";
 import ProfileSettingsModal from "@/components/profile/profile-settings-modal";
 import GuildSettingsModal from "@/components/guild-settings-modal";
 import MemberList from "@/components/members/member-list";
+import VoiceChannelView from "@/components/voice/voice-channel-view";
 import { getDisplayInitial } from "@/components/utils/format";
 import { applyChannelBulkPatch } from "@/components/utils/channel-patch";
 import { dedupeById, dedupeChronological } from "@/components/utils/dedupe";
@@ -71,6 +80,7 @@ import {
   presenceDotClassName,
   presenceQueryKeys,
 } from "@/lib/presence";
+import { useVoice } from "@/lib/voice/use-voice";
 import {
   completeUpload,
   initAttachmentUpload,
@@ -97,7 +107,9 @@ const removeMessageFromInfinite = (
 
   return {
     ...current,
-    pages: current.pages.map((page) => page.filter((item) => item.id !== messageId)),
+    pages: current.pages.map((page) =>
+      page.filter((item) => item.id !== messageId),
+    ),
   };
 };
 
@@ -148,7 +160,9 @@ export function ChatApp() {
   const [createGuildOpen, setCreateGuildOpen] = useState(false);
   const [createGuildName, setCreateGuildName] = useState("");
   const [createChannelOpen, setCreateChannelOpen] = useState(false);
-  const [createChannelType, setCreateChannelType] = useState<"0" | "4">("0");
+  const [createChannelType, setCreateChannelType] = useState<"0" | "2" | "4">(
+    "0",
+  );
   const [createChannelName, setCreateChannelName] = useState("");
   const [createChannelParentId, setCreateChannelParentId] =
     useState<string>("none");
@@ -166,9 +180,16 @@ export function ChatApp() {
   const [isSendingMessage, setIsSendingMessage] = useState(false);
   const [deletingMessageIds, setDeletingMessageIds] = useState<string[]>([]);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
-  const [editingInFlightMessageId, setEditingInFlightMessageId] = useState<string | null>(null);
+  const [editingInFlightMessageId, setEditingInFlightMessageId] = useState<
+    string | null
+  >(null);
   const [mobileMembersOpen, setMobileMembersOpen] = useState(false);
   const [presencePickerOpen, setPresencePickerOpen] = useState(false);
+  const [voiceChannelsOverlayOpen, setVoiceChannelsOverlayOpen] =
+    useState(false);
+  const [lastTextChannelByGuild, setLastTextChannelByGuild] = useState<
+    Record<string, string>
+  >({});
 
   const typingThrottleRef = useRef(0);
   const messageListContainerRef = useRef<HTMLDivElement>(null);
@@ -209,6 +230,12 @@ export function ChatApp() {
   const guildPermissionsQuery = useQuery({
     queryKey: queryKeys.guildPermissions(route.guildId ?? "none"),
     queryFn: () => api.getMyGuildPermissions(route.guildId!),
+    enabled: route.mode === "guild" && Boolean(route.guildId),
+  });
+
+  const guildVoiceStateQuery = useQuery({
+    queryKey: queryKeys.guildVoiceState(route.guildId ?? "none"),
+    queryFn: () => api.getGuildVoiceState(route.guildId!),
     enabled: route.mode === "guild" && Boolean(route.guildId),
   });
 
@@ -268,6 +295,7 @@ export function ChatApp() {
   );
   const myGuildRoleIds = guildPermissionsQuery.data?.role_ids ?? [];
   const activeGuildRoles = activeGuildRolesQuery.data ?? [];
+  const guildVoiceStateByChannelId = guildVoiceStateQuery.data ?? {};
   const hasGuildPermission = (bit: bigint): boolean =>
     hasPermission(guildPermissions, PermissionBits.ADMINISTRATOR) ||
     hasPermission(guildPermissions, bit);
@@ -293,6 +321,11 @@ export function ChatApp() {
     Boolean(route.guildId) &&
     activeGuildChannel?.type === ChannelType.GUILD_TEXT;
 
+  const isGuildVoiceChannel =
+    route.mode === "guild" &&
+    Boolean(route.guildId) &&
+    activeGuildChannel?.type === ChannelType.GUILD_VOICE;
+
   const activeMessageChannelId =
     route.mode === "dm"
       ? (activeDm?.id ?? null)
@@ -315,9 +348,9 @@ export function ChatApp() {
   const currentUserId = meQuery.data?.id ?? sessionUser?.id ?? null;
   const canLeaveActiveGuild = Boolean(
     route.mode === "guild" &&
-      activeGuild &&
-      currentUserId &&
-      activeGuild.owner_id !== currentUserId,
+    activeGuild &&
+    currentUserId &&
+    activeGuild.owner_id !== currentUserId,
   );
 
   const { sendPresenceUpdate } = useGateway({
@@ -325,6 +358,9 @@ export function ChatApp() {
     userId: sessionUser?.id ?? null,
     activeChannelId: activeMessageChannelId,
   });
+
+  const voice = useVoice();
+  const previousVoicePhaseRef = useRef(voice.status.phase);
 
   const selfPresenceQuery = useQuery({
     queryKey: presenceQueryKeys.selfPresence,
@@ -431,7 +467,9 @@ export function ChatApp() {
       queryClient.removeQueries({
         queryKey: queryKeys.guildSettings(guildId),
       });
-      queryClient.removeQueries({ queryKey: ["guild-members-settings", guildId] });
+      queryClient.removeQueries({
+        queryKey: ["guild-members-settings", guildId],
+      });
 
       if (route.mode === "guild" && route.guildId === guildId) {
         navigate("/app/channels/@me");
@@ -449,7 +487,7 @@ export function ChatApp() {
   const createGuildChannelMutation = useMutation({
     mutationFn: (payload: {
       name: string;
-      type: 0 | 4;
+      type: 0 | 2 | 4;
       parent_id?: string | null;
     }) => api.createGuildChannel(route.guildId!, payload),
     onSuccess: (channel) => {
@@ -608,9 +646,9 @@ export function ChatApp() {
         queryKey: queryKeys.messages(channelId),
       });
 
-      const previousMessages = queryClient.getQueryData<InfiniteData<MessagePayload[]>>(
-        queryKeys.messages(channelId),
-      );
+      const previousMessages = queryClient.getQueryData<
+        InfiniteData<MessagePayload[]>
+      >(queryKeys.messages(channelId));
       const previousDmChannels = queryClient.getQueryData<DmChannel[]>(
         queryKeys.dmChannels,
       );
@@ -622,7 +660,8 @@ export function ChatApp() {
 
       if (
         (previousDmChannels ?? []).some(
-          (channel) => channel.id === channelId && channel.last_message_id === messageId,
+          (channel) =>
+            channel.id === channelId && channel.last_message_id === messageId,
         )
       ) {
         queryClient.setQueryData<DmChannel[]>(queryKeys.dmChannels, (old) =>
@@ -634,7 +673,8 @@ export function ChatApp() {
         );
       }
       const shouldRefreshDmPreview = (previousDmChannels ?? []).some(
-        (channel) => channel.id === channelId && channel.last_message_id === messageId,
+        (channel) =>
+          channel.id === channelId && channel.last_message_id === messageId,
       );
 
       return {
@@ -706,9 +746,9 @@ export function ChatApp() {
         queryKey: queryKeys.messages(channelId),
       });
 
-      const previousMessages = queryClient.getQueryData<InfiniteData<MessagePayload[]>>(
-        queryKeys.messages(channelId),
-      );
+      const previousMessages = queryClient.getQueryData<
+        InfiniteData<MessagePayload[]>
+      >(queryKeys.messages(channelId));
 
       const optimisticEditedTimestamp = new Date().toISOString();
       queryClient.setQueryData<InfiniteData<MessagePayload[]>>(
@@ -775,6 +815,18 @@ export function ChatApp() {
   }, [location.pathname, navigate]);
 
   useEffect(() => {
+    if (!sessionUser?.id && voice.connected) {
+      voice.disconnect();
+    }
+  }, [sessionUser?.id, voice.connected, voice.disconnect]);
+
+  useEffect(() => {
+    return () => {
+      voice.disconnect();
+    };
+  }, [voice.disconnect]);
+
+  useEffect(() => {
     if (
       route.mode !== "guild" ||
       !route.guildId ||
@@ -800,6 +852,61 @@ export function ChatApp() {
   useEffect(() => {
     setPresencePickerOpen(false);
   }, [route.channelId, route.guildId, route.mode]);
+
+  useEffect(() => {
+    if (!isGuildVoiceChannel) {
+      setVoiceChannelsOverlayOpen(false);
+    }
+  }, [isGuildVoiceChannel]);
+
+  useEffect(() => {
+    const previousPhase = previousVoicePhaseRef.current;
+    const currentPhase = voice.status.phase;
+
+    if (
+      isGuildVoiceChannel &&
+      route.guildId &&
+      previousPhase !== "idle" &&
+      currentPhase === "idle"
+    ) {
+      const fallbackTextChannelId =
+        lastTextChannelByGuild[route.guildId] ??
+        guildChannels.find(channel => channel.type === ChannelType.GUILD_TEXT)?.id;
+
+      if (fallbackTextChannelId) {
+        navigate(`/app/channels/${route.guildId}/${fallbackTextChannelId}`);
+      }
+    }
+
+    previousVoicePhaseRef.current = currentPhase;
+  }, [
+    guildChannels,
+    isGuildVoiceChannel,
+    lastTextChannelByGuild,
+    navigate,
+    route.guildId,
+    voice.status.phase,
+  ]);
+
+  useEffect(() => {
+    if (
+      route.mode !== "guild" ||
+      !route.guildId ||
+      !route.channelId ||
+      !activeGuildChannel
+    ) {
+      return;
+    }
+
+    if (activeGuildChannel.type !== ChannelType.GUILD_TEXT) {
+      return;
+    }
+
+    setLastTextChannelByGuild((old) => ({
+      ...old,
+      [route.guildId!]: route.channelId!,
+    }));
+  }, [activeGuildChannel, route.channelId, route.guildId, route.mode]);
 
   useEffect(() => {
     const persisted = me?.settings?.presence_status;
@@ -829,7 +936,10 @@ export function ChatApp() {
         return;
       }
 
-      if (event.target instanceof Node && !presencePickerRef.current.contains(event.target)) {
+      if (
+        event.target instanceof Node &&
+        !presencePickerRef.current.contains(event.target)
+      ) {
         setPresencePickerOpen(false);
       }
     };
@@ -851,21 +961,33 @@ export function ChatApp() {
   useEffect(() => {
     const markActive = (): void => {
       lastPresenceActivityAtRef.current = Date.now();
-      const current = queryClient.getQueryData<SelfPresenceStatus>(presenceQueryKeys.selfPresence) ?? "online";
+      const current =
+        queryClient.getQueryData<SelfPresenceStatus>(
+          presenceQueryKeys.selfPresence,
+        ) ?? "online";
       if (current === "idle") {
-        queryClient.setQueryData<SelfPresenceStatus>(presenceQueryKeys.selfPresence, "online");
+        queryClient.setQueryData<SelfPresenceStatus>(
+          presenceQueryKeys.selfPresence,
+          "online",
+        );
         sendPresenceUpdate("online");
       }
     };
 
     const intervalId = window.setInterval(() => {
-      const current = queryClient.getQueryData<SelfPresenceStatus>(presenceQueryKeys.selfPresence) ?? "online";
+      const current =
+        queryClient.getQueryData<SelfPresenceStatus>(
+          presenceQueryKeys.selfPresence,
+        ) ?? "online";
       if (current !== "online") {
         return;
       }
 
       if (Date.now() - lastPresenceActivityAtRef.current >= 5 * 60 * 1000) {
-        queryClient.setQueryData<SelfPresenceStatus>(presenceQueryKeys.selfPresence, "idle");
+        queryClient.setQueryData<SelfPresenceStatus>(
+          presenceQueryKeys.selfPresence,
+          "idle",
+        );
         sendPresenceUpdate("idle");
       }
     }, 30_000);
@@ -882,9 +1004,17 @@ export function ChatApp() {
     };
   }, [queryClient, sendPresenceUpdate]);
 
-  const setManualPresence = (nextStatus: Extract<SelfPresenceStatus, "online" | "dnd" | "invisible">): void => {
-    const previousStatus = queryClient.getQueryData<SelfPresenceStatus>(presenceQueryKeys.selfPresence) ?? "online";
-    queryClient.setQueryData<SelfPresenceStatus>(presenceQueryKeys.selfPresence, nextStatus);
+  const setManualPresence = (
+    nextStatus: Extract<SelfPresenceStatus, "online" | "dnd" | "invisible">,
+  ): void => {
+    const previousStatus =
+      queryClient.getQueryData<SelfPresenceStatus>(
+        presenceQueryKeys.selfPresence,
+      ) ?? "online";
+    queryClient.setQueryData<SelfPresenceStatus>(
+      presenceQueryKeys.selfPresence,
+      nextStatus,
+    );
     sendPresenceUpdate(nextStatus);
     setPresencePickerOpen(false);
 
@@ -893,8 +1023,13 @@ export function ChatApp() {
         presence_status: nextStatus,
       })
       .catch((error) => {
-        queryClient.setQueryData<SelfPresenceStatus>(presenceQueryKeys.selfPresence, previousStatus);
-        toast.error(error instanceof Error ? error.message : "Could not update status.");
+        queryClient.setQueryData<SelfPresenceStatus>(
+          presenceQueryKeys.selfPresence,
+          previousStatus,
+        );
+        toast.error(
+          error instanceof Error ? error.message : "Could not update status.",
+        );
       });
   };
 
@@ -918,7 +1053,11 @@ export function ChatApp() {
       return;
     }
 
-    if (!selected || selected.type !== ChannelType.GUILD_TEXT) {
+    const isSelectableGuildChannel =
+      selected?.type === ChannelType.GUILD_TEXT ||
+      selected?.type === ChannelType.GUILD_VOICE;
+
+    if (!selected || !isSelectableGuildChannel) {
       navigate(`/app/channels/${route.guildId}/${firstText.id}`, {
         replace: true,
       });
@@ -958,7 +1097,8 @@ export function ChatApp() {
       });
 
       if (!foundChannel) {
-        affectedGuildId = route.mode === "guild" ? (route.guildId ?? null) : null;
+        affectedGuildId =
+          route.mode === "guild" ? (route.guildId ?? null) : null;
         nextChannels.push({
           channel_id: activeMessageChannelId,
           guild_id: affectedGuildId,
@@ -982,7 +1122,9 @@ export function ChatApp() {
         .filter((badge) => badge.guild_id === affectedGuildId)
         .reduce((sum, badge) => sum + badge.mention_count, 0);
 
-      const guildIndex = old.guilds.findIndex((badge) => badge.guild_id === affectedGuildId);
+      const guildIndex = old.guilds.findIndex(
+        (badge) => badge.guild_id === affectedGuildId,
+      );
       const nextGuilds = [...old.guilds];
       if (guildIndex === -1) {
         nextGuilds.push({
@@ -1004,26 +1146,37 @@ export function ChatApp() {
       };
     });
 
-    queryClient.setQueryData<ChannelBadgePayload>(queryKeys.channelBadge(activeMessageChannelId), (old) => ({
-      channel_id: activeMessageChannelId,
-      guild_id: old?.guild_id ?? (route.mode === "guild" ? (route.guildId ?? null) : null),
-      unread_count: 0,
-      mention_count: 0,
-      last_message_id: newestMessageId,
-    }));
+    queryClient.setQueryData<ChannelBadgePayload>(
+      queryKeys.channelBadge(activeMessageChannelId),
+      (old) => ({
+        channel_id: activeMessageChannelId,
+        guild_id:
+          old?.guild_id ??
+          (route.mode === "guild" ? (route.guildId ?? null) : null),
+        unread_count: 0,
+        mention_count: 0,
+        last_message_id: newestMessageId,
+      }),
+    );
 
     queryClient.setQueryData<DmChannel[]>(queryKeys.dmChannels, (old) =>
       (old ?? []).map((channel) =>
-        channel.id === activeMessageChannelId ? { ...channel, unread: false } : channel,
+        channel.id === activeMessageChannelId
+          ? { ...channel, unread: false }
+          : channel,
       ),
     );
 
-    api
-      .markRead(activeMessageChannelId, newestMessageId)
-      .catch(() => {
-        void queryClient.invalidateQueries({ queryKey: queryKeys.badges });
-      });
-  }, [activeMessageChannelId, newestMessageId, queryClient, route.guildId, route.mode]);
+    api.markRead(activeMessageChannelId, newestMessageId).catch(() => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.badges });
+    });
+  }, [
+    activeMessageChannelId,
+    newestMessageId,
+    queryClient,
+    route.guildId,
+    route.mode,
+  ]);
 
   useEffect(() => {
     if (!activeMessageChannelId) {
@@ -1149,7 +1302,13 @@ export function ChatApp() {
     addKnownUser(activeDm?.recipients[0]);
 
     return typingUserIds.map((userId) => knownNames.get(userId) ?? "Someone");
-  }, [activeDm, chronologicalMessages, dmChannels, meQuery.data, typingUserIds]);
+  }, [
+    activeDm,
+    chronologicalMessages,
+    dmChannels,
+    meQuery.data,
+    typingUserIds,
+  ]);
   const typingText = useMemo(() => {
     const uniqueTypingUserNames = [...new Set(typingUserNames)];
     if (uniqueTypingUserNames.length === 0) {
@@ -1461,9 +1620,10 @@ export function ChatApp() {
       return;
     }
 
-    const type = Number(createChannelType) as 0 | 4;
+    const type = Number(createChannelType) as 0 | 2 | 4;
     const parentId =
-      type === ChannelType.GUILD_TEXT && createChannelParentId !== "none"
+      (type === ChannelType.GUILD_TEXT || type === ChannelType.GUILD_VOICE) &&
+      createChannelParentId !== "none"
         ? createChannelParentId
         : null;
 
@@ -1477,6 +1637,23 @@ export function ChatApp() {
   const compactMode = me?.settings?.compact_mode ?? false;
   const showTimestamps = me?.settings?.show_timestamps ?? true;
   const localePreference = me?.settings?.locale ?? undefined;
+  const voiceParticipantsByChannelId = useMemo(
+    () =>
+      Object.fromEntries(
+        Object.entries(guildVoiceStateByChannelId).map(
+          ([channelId, participants]) => [
+            channelId,
+            participants.map((participant) => ({
+              socket_id: participant.socket_id,
+              id: participant.user.id,
+              display_name: participant.user.display_name,
+              presence_status: participant.user.presence_status,
+            })),
+          ],
+        ),
+      ),
+    [guildVoiceStateByChannelId],
+  );
 
   useEffect(() => {
     return syncDocumentTheme(me?.settings?.theme ?? "system");
@@ -1486,144 +1663,202 @@ export function ChatApp() {
     <>
       <AppShell
         className={
-          isGuildTextChannel ? "xl:grid-cols-[72px_300px_1fr_260px]" : undefined
+          isGuildTextChannel
+            ? "xl:grid-cols-[72px_300px_1fr_260px]"
+            : isGuildVoiceChannel
+              ? "grid-cols-1"
+              : undefined
         }
       >
-        <GuildSwitcher
-          route={route}
-          guilds={guilds}
-          guildBadges={guildBadgeById}
-          onCreateGuild={() => setCreateGuildOpen(true)}
-        />
-
-        <aside className="border-r bg-card flex flex-col overflow-hidden">
-          {route.mode === "dm" ? (
-            <DmSidebar
-              search={search}
-              onSearchChange={setSearch}
-              usersSearchResults={usersSearchQuery.data}
-              dmChannels={dmChannels}
-              presences={presences}
-              channelBadges={channelBadgeById}
-              activeChannelId={route.channelId}
-              onCreateDm={(recipientId) => createDmMutation.mutate(recipientId)}
+        {!isGuildVoiceChannel ? (
+          <>
+            <GuildSwitcher
+              route={route}
+              guilds={guilds}
+              guildBadges={guildBadgeById}
+              onCreateGuild={() => setCreateGuildOpen(true)}
             />
-          ) : (
-            <GuildSidebar
-              guildId={route.guildId}
-              activeGuild={activeGuild}
-              channels={guildChannels}
-              channelBadges={channelBadgeById}
-              activeChannelId={route.channelId}
-              canManageGuild={canManageGuild}
-              canLeaveGuild={canLeaveActiveGuild}
-              isLeavingGuild={leaveGuildMutation.isPending}
-              canManageChannels={canManageChannels}
-              onOpenSettings={() => setSettingsOpen(true)}
-              onLeaveGuild={() => {
-                const guildId = route.guildId;
-                if (!guildId || leaveGuildMutation.isPending) {
-                  return;
-                }
-                const guildName = activeGuild?.name ?? "this server";
-                if (!window.confirm(`Leave ${guildName}?`)) {
-                  return;
-                }
-                leaveGuildMutation.mutate(guildId);
-              }}
-              onOpenChannel={(channelId) => {
-                if (!route.guildId) {
-                  return;
-                }
-                navigate(`/app/channels/${route.guildId}/${channelId}`);
-              }}
-              onCreateCategory={() => {
-                setCreateChannelType("4");
-                setCreateChannelParentId("none");
-                setCreateChannelOpen(true);
-              }}
-              onCreateChannel={(parentId) => {
-                setCreateChannelType("0");
-                setCreateChannelParentId(parentId ?? "none");
-                setCreateChannelOpen(true);
-              }}
-              onReorder={async (payload) => {
-                if (!route.guildId) {
-                  return;
-                }
-                await reorderGuildChannelsMutation.mutateAsync(payload);
-              }}
-            />
-          )}
 
-          <div className="border-t px-3 py-3 flex items-center justify-between gap-2">
-            <div className="min-w-0 flex items-center gap-2" ref={presencePickerRef}>
-              <div className="relative">
-                <button
-                  type="button"
-                  onClick={() => setPresencePickerOpen((open) => !open)}
-                  className="h-8 w-8 shrink-0 overflow-hidden rounded-full bg-muted grid place-items-center text-xs font-semibold uppercase"
-                  aria-label="Set status"
-                >
-                  {me?.avatar_url ? (
-                    <img
-                      src={me.avatar_url}
-                      alt={`${me.display_name} avatar`}
-                      className="h-full w-full object-cover"
-                    />
-                  ) : (
-                    getDisplayInitial(
-                      me?.display_name ?? sessionUser?.name ?? "You",
-                    )
-                  )}
-                </button>
-                <span
-                  className={`absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-card ${presenceDotClassName(selfPresence)}`}
+            <aside className="border-r bg-card flex flex-col overflow-hidden">
+              {route.mode === "dm" ? (
+                <DmSidebar
+                  search={search}
+                  onSearchChange={setSearch}
+                  usersSearchResults={usersSearchQuery.data}
+                  dmChannels={dmChannels}
+                  presences={presences}
+                  channelBadges={channelBadgeById}
+                  activeChannelId={route.channelId}
+                  onCreateDm={(recipientId) =>
+                    createDmMutation.mutate(recipientId)
+                  }
                 />
+              ) : (
+                <GuildSidebar
+                  guildId={route.guildId}
+                  activeGuild={activeGuild}
+                  channels={guildChannels}
+                  channelBadges={channelBadgeById}
+                  activeChannelId={route.channelId}
+                  canManageGuild={canManageGuild}
+                  canLeaveGuild={canLeaveActiveGuild}
+                  isLeavingGuild={leaveGuildMutation.isPending}
+                  canManageChannels={canManageChannels}
+                  activeVoiceChannelId={voice.channelId}
+                  joiningVoiceChannelId={voice.joiningChannelId}
+                  voiceParticipantsByChannelId={voiceParticipantsByChannelId}
+                  onOpenSettings={() => setSettingsOpen(true)}
+                  onLeaveGuild={() => {
+                    const guildId = route.guildId;
+                    if (!guildId || leaveGuildMutation.isPending) {
+                      return;
+                    }
+                    const guildName = activeGuild?.name ?? "this server";
+                    if (!window.confirm(`Leave ${guildName}?`)) {
+                      return;
+                    }
+                    leaveGuildMutation.mutate(guildId);
+                  }}
+                  onOpenChannel={(channelId) => {
+                    if (!route.guildId) {
+                      return;
+                    }
+                    navigate(`/app/channels/${route.guildId}/${channelId}`);
+                  }}
+                  onJoinVoiceChannel={(channelId) => {
+                    if (!route.guildId) {
+                      return;
+                    }
+                    navigate(`/app/channels/${route.guildId}/${channelId}`);
+                  }}
+                  onCreateCategory={() => {
+                    setCreateChannelType("4");
+                    setCreateChannelParentId("none");
+                    setCreateChannelOpen(true);
+                  }}
+                  onCreateChannel={(parentId) => {
+                    if (parentId === "voice-root") {
+                      setCreateChannelType("2");
+                      setCreateChannelParentId("none");
+                    } else {
+                      setCreateChannelType("0");
+                      setCreateChannelParentId(parentId ?? "none");
+                    }
+                    setCreateChannelOpen(true);
+                  }}
+                  onReorder={async (payload) => {
+                    if (!route.guildId) {
+                      return;
+                    }
+                    await reorderGuildChannelsMutation.mutateAsync(payload);
+                  }}
+                />
+              )}
 
-                {presencePickerOpen ? (
-                  <div className="absolute bottom-full left-0 z-20 mb-2 w-44 rounded-md border bg-popover p-1 shadow-md">
-                    {[
-                      { label: "Online", value: "online" as const },
-                      { label: "Do Not Disturb", value: "dnd" as const },
-                      { label: "Invisible", value: "invisible" as const },
-                    ].map((option) => (
-                      <button
-                        key={option.value}
-                        type="button"
-                        className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent"
-                        onClick={() => setManualPresence(option.value)}
-                      >
-                        <span className={`h-2.5 w-2.5 rounded-full ${presenceDotClassName(option.value)}`} />
-                        <span>{option.label}</span>
-                      </button>
-                    ))}
+              <div className="border-t px-3 py-3 flex items-center justify-between gap-2">
+                <div
+                  className="min-w-0 flex items-center gap-2"
+                  ref={presencePickerRef}
+                >
+                  <div className="relative">
+                    <button
+                      type="button"
+                      onClick={() => setPresencePickerOpen((open) => !open)}
+                      className="h-8 w-8 shrink-0 overflow-hidden rounded-full bg-muted grid place-items-center text-xs font-semibold uppercase"
+                      aria-label="Set status"
+                    >
+                      {me?.avatar_url ? (
+                        <img
+                          src={me.avatar_url}
+                          alt={`${me.display_name} avatar`}
+                          className="h-full w-full object-cover"
+                        />
+                      ) : (
+                        getDisplayInitial(
+                          me?.display_name ?? sessionUser?.name ?? "You",
+                        )
+                      )}
+                    </button>
+                    <span
+                      className={`absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-card ${presenceDotClassName(selfPresence)}`}
+                    />
+
+                    {presencePickerOpen ? (
+                      <div className="absolute bottom-full left-0 z-20 mb-2 w-44 rounded-md border bg-popover p-1 shadow-md">
+                        {[
+                          { label: "Online", value: "online" as const },
+                          { label: "Do Not Disturb", value: "dnd" as const },
+                          { label: "Invisible", value: "invisible" as const },
+                        ].map((option) => (
+                          <button
+                            key={option.value}
+                            type="button"
+                            className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent"
+                            onClick={() => setManualPresence(option.value)}
+                          >
+                            <span
+                              className={`h-2.5 w-2.5 rounded-full ${presenceDotClassName(option.value)}`}
+                            />
+                            <span>{option.label}</span>
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
                   </div>
-                ) : null}
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold truncate">
+                      {me?.display_name ?? sessionUser?.name ?? "You"}
+                    </p>
+                    <p className="text-xs truncate">
+                      @{me?.username ?? "loading"} · {selfPresence}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1">
+                  <Button
+                    variant="outline"
+                    size="icon-sm"
+                    onClick={() => navigate("/settings/account")}
+                    aria-label="Open user settings"
+                    title="User Settings"
+                  >
+                    <Cog className="size-4" />
+                  </Button>
+                </div>
               </div>
-              <div className="min-w-0">
-                <p className="text-sm font-semibold truncate">
-                  {me?.display_name ?? sessionUser?.name ?? "You"}
-                </p>
-                <p className="text-xs truncate">@{me?.username ?? "loading"} · {selfPresence}</p>
-              </div>
-            </div>
-            <div className="flex items-center gap-1">
-              <Button
-                variant="outline"
-                size="icon-sm"
-                onClick={() => navigate("/settings/account")}
-                aria-label="Open user settings"
-                title="User Settings"
-              >
-                <Cog className="size-4" />
-              </Button>
-            </div>
-          </div>
-        </aside>
+            </aside>
+          </>
+        ) : null}
 
-        <main className="flex h-full min-h-0 flex-col bg-background">
-          {activeMessageChannelId ? (
+        <main className="relative flex h-full min-h-0 flex-col bg-background">
+          {isGuildVoiceChannel ? (
+            route.guildId && activeGuildChannel ? (
+              <VoiceChannelView
+                guildId={route.guildId}
+                channel={activeGuildChannel}
+                me={me}
+                voice={voice}
+                canConnect={hasPermission(
+                  activeGuildChannelPermissions,
+                  PermissionBits.CONNECT,
+                )}
+                onBack={() => {
+                  const fallbackTextChannelId =
+                    lastTextChannelByGuild[route.guildId!] ??
+                    guildChannels.find(
+                      (channel) => channel.type === ChannelType.GUILD_TEXT,
+                    )?.id;
+                  if (fallbackTextChannelId) {
+                    navigate(
+                      `/app/channels/${route.guildId}/${fallbackTextChannelId}`,
+                    );
+                  }
+                }}
+                onOpenChannelsOverlay={() => setVoiceChannelsOverlayOpen(true)}
+                onOpenProfile={openProfile}
+              />
+            ) : null
+          ) : activeMessageChannelId ? (
             <>
               <ChatHeader
                 routeMode={route.mode}
@@ -1631,21 +1866,29 @@ export function ChatApp() {
                 dmUsername={activeDm?.recipients[0]?.username}
                 canCreateInvite={canManageChannels && route.mode === "guild"}
                 onCreateInvite={openInvite}
+                onCall={() => {
+                  if (!activeDm) {
+                    return;
+                  }
+                  const label =
+                    activeDm.recipients[0]?.display_name ?? "DM Call";
+                  void voice.joinDmVoice(activeDm.id, label);
+                }}
                 showMembersToggle={isGuildTextChannel}
                 onToggleMembers={() => setMobileMembersOpen(true)}
               />
 
               <MessageList
-              messages={chronologicalMessages}
-              compactMode={compactMode}
-              showTimestamps={showTimestamps}
-              localePreference={localePreference}
-              routeMode={route.mode}
-              currentUserId={me?.id ?? sessionUser?.id ?? null}
-              currentUserRoleIds={myGuildRoleIds}
-              guildRoles={activeGuildRoles}
-              guildChannels={guildChannels}
-              activeGuildChannelPermissions={activeGuildChannelPermissions}
+                messages={chronologicalMessages}
+                compactMode={compactMode}
+                showTimestamps={showTimestamps}
+                localePreference={localePreference}
+                routeMode={route.mode}
+                currentUserId={me?.id ?? sessionUser?.id ?? null}
+                currentUserRoleIds={myGuildRoleIds}
+                guildRoles={activeGuildRoles}
+                guildChannels={guildChannels}
+                activeGuildChannelPermissions={activeGuildChannelPermissions}
                 onLoadOlder={() => messagesQuery.fetchNextPage()}
                 canLoadOlder={Boolean(messagesQuery.hasNextPage)}
                 isLoadingOlder={messagesQuery.isFetchingNextPage}
@@ -1654,7 +1897,10 @@ export function ChatApp() {
                 editingInFlightMessageId={editingInFlightMessageId}
                 onOpenProfile={openProfile}
                 onDeleteMessage={(messageId) => {
-                  if (!activeMessageChannelId || deletingMessageIds.includes(messageId)) {
+                  if (
+                    !activeMessageChannelId ||
+                    deletingMessageIds.includes(messageId)
+                  ) {
                     return;
                   }
 
@@ -1698,7 +1944,9 @@ export function ChatApp() {
                 onValueChange={setComposerValue}
                 canSendInActiveChannel={canSendInActiveChannel}
                 routeMode={route.mode}
-                guildId={route.mode === "guild" ? (route.guildId ?? null) : null}
+                guildId={
+                  route.mode === "guild" ? (route.guildId ?? null) : null
+                }
                 currentUserId={me?.id ?? sessionUser?.id ?? null}
                 dmMentionUser={activeDm?.recipients[0] ?? null}
                 dmUsername={activeDm?.recipients[0]?.username}
@@ -1717,12 +1965,221 @@ export function ChatApp() {
           ) : (
             <div className="h-full grid place-items-center text-center px-6">
               <div>
-                <h2 className="text-xl font-semibold mb-2">No channel selected</h2>
+                <h2 className="text-xl font-semibold mb-2">
+                  No channel selected
+                </h2>
                 <p>Select a DM or a text channel from the sidebar.</p>
               </div>
             </div>
           )}
+
+          {!isGuildVoiceChannel && voice.status.phase !== "idle" ? (
+            <div className="shrink-0 border-t bg-card px-3 py-2">
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold truncate">
+                    {voice.status.phase === "requesting_token"
+                      ? "Starting voice"
+                      : voice.status.phase === "connecting_ws"
+                        ? "Connecting to voice server"
+                        : voice.status.phase === "authenticating"
+                          ? "Authenticating"
+                          : voice.status.phase === "joining_room"
+                            ? "Joining channel"
+                            : voice.status.phase === "acquiring_microphone"
+                              ? "Setting up microphone"
+                              : voice.status.phase === "negotiating_peers"
+                                ? `Connecting to peers (${voice.status.peers.connected}/${Math.max(voice.status.peers.total, 1)})`
+                                : voice.status.phase === "reconnecting"
+                                  ? "Reconnecting"
+                                  : voice.status.phase === "failed"
+                                    ? "Connection failed"
+                                    : voice.status.phase === "leaving"
+                                      ? "Leaving voice"
+                                      : "Connected"}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    ws: {voice.status.ws.state}
+                    {typeof voice.status.ws.rttMs === "number"
+                      ? ` • ${voice.status.ws.rttMs}ms`
+                      : ""}
+                    {` • mic: ${voice.status.media.mic}`}
+                    {` • peers: ${voice.status.peers.connected}/${voice.status.peers.total}`}
+                  </p>
+                </div>
+                <div className="flex items-center gap-1">
+                  <Button
+                    variant={voice.selfMute ? "secondary" : "outline"}
+                    size="icon-sm"
+                    onClick={voice.toggleMute}
+                  >
+                    {voice.selfMute ? (
+                      <MicOff className="size-4" />
+                    ) : (
+                      <Mic className="size-4" />
+                    )}
+                  </Button>
+                  <Button
+                    variant={voice.selfDeaf ? "secondary" : "outline"}
+                    size="icon-sm"
+                    onClick={voice.toggleDeafen}
+                  >
+                    <Headphones className="size-4" />
+                  </Button>
+                  <Button
+                    variant={voice.screenSharing ? "secondary" : "outline"}
+                    size="icon-sm"
+                    disabled={voice.status.phase !== "connected"}
+                    onClick={() => void voice.toggleScreenshare()}
+                  >
+                    <MonitorUp className="size-4" />
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    size="icon-sm"
+                    onClick={voice.disconnect}
+                  >
+                    <PhoneOff className="size-4" />
+                  </Button>
+                  {voice.status.phase === "failed" ? (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={voice.retryJoin}
+                    >
+                      Retry
+                    </Button>
+                  ) : null}
+                  {voice.status.media.mic === "denied" ? (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => void voice.retryMicrophone()}
+                    >
+                      Retry microphone
+                    </Button>
+                  ) : null}
+                </div>
+              </div>
+              {voice.status.error ? (
+                <p className="mt-1 text-xs text-destructive">
+                  {voice.status.error.message}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+
+          {!isGuildVoiceChannel &&
+          Object.entries(voice.screenStreams).length > 0 ? (
+            <div className="pointer-events-none absolute bottom-16 right-4 z-20 w-72 rounded-md border bg-card p-2 shadow-lg">
+              {(() => {
+                const [socketId, stream] =
+                  Object.entries(voice.screenStreams)[0] ?? [];
+                if (!socketId || !stream) {
+                  return null;
+                }
+                const peer = voice.peers[socketId];
+                return (
+                  <>
+                    <p className="mb-1 text-xs text-muted-foreground truncate">
+                      {peer?.user.display_name ?? "Screen share"}
+                    </p>
+                    <video
+                      autoPlay
+                      playsInline
+                      muted
+                      className="h-40 w-full rounded bg-black object-cover"
+                      ref={(node) => {
+                        if (node && node.srcObject !== stream) {
+                          node.srcObject = stream;
+                        }
+                      }}
+                    />
+                  </>
+                );
+              })()}
+            </div>
+          ) : null}
         </main>
+
+        {isGuildVoiceChannel && route.guildId && voiceChannelsOverlayOpen ? (
+          <div className="fixed inset-0 z-50">
+            <button
+              type="button"
+              className="absolute inset-0 bg-background/70"
+              onClick={() => setVoiceChannelsOverlayOpen(false)}
+              aria-label="Close channels overlay"
+            />
+            <div className="absolute inset-y-0 left-0 w-[min(100vw-40px,340px)] border-r bg-card">
+              <div className="relative h-full">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  className="absolute right-2 top-2 z-10"
+                  onClick={() => setVoiceChannelsOverlayOpen(false)}
+                  aria-label="Close channels overlay"
+                >
+                  <X className="size-4" />
+                </Button>
+                <GuildSidebar
+                  guildId={route.guildId}
+                  activeGuild={activeGuild}
+                  channels={guildChannels}
+                  channelBadges={channelBadgeById}
+                  activeChannelId={route.channelId}
+                  canManageGuild={canManageGuild}
+                  canLeaveGuild={canLeaveActiveGuild}
+                  isLeavingGuild={leaveGuildMutation.isPending}
+                  canManageChannels={canManageChannels}
+                  activeVoiceChannelId={voice.channelId}
+                  joiningVoiceChannelId={voice.joiningChannelId}
+                  voiceParticipantsByChannelId={voiceParticipantsByChannelId}
+                  onOpenSettings={() => setSettingsOpen(true)}
+                  onLeaveGuild={() => {
+                    const guildId = route.guildId;
+                    if (!guildId || leaveGuildMutation.isPending) {
+                      return;
+                    }
+                    const guildName = activeGuild?.name ?? "this server";
+                    if (!window.confirm(`Leave ${guildName}?`)) {
+                      return;
+                    }
+                    leaveGuildMutation.mutate(guildId);
+                  }}
+                  onOpenChannel={(channelId) => {
+                    navigate(`/app/channels/${route.guildId}/${channelId}`);
+                    setVoiceChannelsOverlayOpen(false);
+                  }}
+                  onJoinVoiceChannel={(channelId) => {
+                    navigate(`/app/channels/${route.guildId}/${channelId}`);
+                    setVoiceChannelsOverlayOpen(false);
+                  }}
+                  onCreateCategory={() => {
+                    setCreateChannelType("4");
+                    setCreateChannelParentId("none");
+                    setCreateChannelOpen(true);
+                    setVoiceChannelsOverlayOpen(false);
+                  }}
+                  onCreateChannel={(parentId) => {
+                    if (parentId === "voice-root") {
+                      setCreateChannelType("2");
+                      setCreateChannelParentId("none");
+                    } else {
+                      setCreateChannelType("0");
+                      setCreateChannelParentId(parentId ?? "none");
+                    }
+                    setCreateChannelOpen(true);
+                    setVoiceChannelsOverlayOpen(false);
+                  }}
+                  onReorder={async (payload) => {
+                    await reorderGuildChannelsMutation.mutateAsync(payload);
+                  }}
+                />
+              </div>
+            </div>
+          </div>
+        ) : null}
 
         {isGuildTextChannel && route.guildId ? (
           <div className="hidden xl:block">
@@ -1780,10 +2237,16 @@ export function ChatApp() {
       <ProfileDialog
         state={profileDialog}
         onClose={() => setProfileDialog(null)}
-        presenceStatus={profileDialog ? (presences[profileDialog.user.id] ?? "offline") : "offline"}
+        presenceStatus={
+          profileDialog
+            ? (presences[profileDialog.user.id] ?? "offline")
+            : "offline"
+        }
         roles={profileRoles}
         joinedAt={profileMemberQuery.data?.joined_at}
-        isLoadingRoles={profileMemberQuery.isPending || profileRolesQuery.isPending}
+        isLoadingRoles={
+          profileMemberQuery.isPending || profileRolesQuery.isPending
+        }
         hasRolesError={profileMemberQuery.isError || profileRolesQuery.isError}
       />
 

@@ -159,8 +159,8 @@ export const createTyping = async (request: BunRequest<"/api/channels/:channelId
     return forbidden(request);
   }
 
-  if (access.channel.type === ChannelType.GUILD_CATEGORY) {
-    return badRequest(request, "Cannot type in a category channel.");
+  if (access.channel.type === ChannelType.GUILD_CATEGORY || access.channel.type === ChannelType.GUILD_VOICE) {
+    return badRequest(request, "Cannot type in this channel type.");
   }
 
   const payload = {

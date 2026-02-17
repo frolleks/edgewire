@@ -21,6 +21,15 @@
         "typescript": "^5.9.2",
       },
     },
+    "apps/voice-server": {
+      "name": "@discord/voice-server",
+      "version": "0.0.1",
+      "devDependencies": {
+        "@types/bun": "latest",
+        "@types/node": "^25.2.3",
+        "typescript": "^5.9.2",
+      },
+    },
     "apps/web": {
       "name": "@discord/web",
       "version": "0.0.1",
@@ -73,6 +82,8 @@
     "@discord/server": ["@discord/server@workspace:apps/server"],
 
     "@discord/types": ["@discord/types@workspace:packages/types"],
+
+    "@discord/voice-server": ["@discord/voice-server@workspace:apps/voice-server"],
 
     "@discord/web": ["@discord/web@workspace:apps/web"],
 

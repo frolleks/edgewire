@@ -190,7 +190,7 @@ export const createGuildChannel = async (request: BunRequest<"/api/guilds/:guild
 
   let parentId: string | null = input.parent_id ?? null;
 
-  if (input.type === ChannelType.GUILD_TEXT && parentId) {
+  if ((input.type === ChannelType.GUILD_TEXT || input.type === ChannelType.GUILD_VOICE) && parentId) {
     const parent = await db.query.channels.findFirst({ where: eq(channels.id, parentId) });
     if (!parent || parent.guildId !== guildId || parent.type !== ChannelType.GUILD_CATEGORY) {
       return badRequest(request, "parent_id must be a category channel in the same guild.");

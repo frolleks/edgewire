@@ -51,8 +51,8 @@ export const getChannelMessages = async (request: BunRequest<"/api/channels/:cha
     return forbidden(request);
   }
 
-  if (access.channel.type === ChannelType.GUILD_CATEGORY) {
-    return badRequest(request, "Cannot send messages to a category channel.");
+  if (access.channel.type === ChannelType.GUILD_CATEGORY || access.channel.type === ChannelType.GUILD_VOICE) {
+    return badRequest(request, "Cannot send messages to this channel type.");
   }
 
   const searchParams = new URL(request.url).searchParams;
@@ -90,8 +90,8 @@ export const createChannelMessage = async (request: BunRequest<"/api/channels/:c
     return forbidden(request);
   }
 
-  if (access.channel.type === ChannelType.GUILD_CATEGORY) {
-    return badRequest(request, "Cannot send messages to a category channel.");
+  if (access.channel.type === ChannelType.GUILD_CATEGORY || access.channel.type === ChannelType.GUILD_VOICE) {
+    return badRequest(request, "Cannot send messages to this channel type.");
   }
 
   const body = await parseJson<unknown>(request);

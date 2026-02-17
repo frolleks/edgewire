@@ -134,15 +134,15 @@ export const channels = pgTable(
     index("channels_parent_id_idx").on(table.parentId),
     index("channels_type_idx").on(table.type),
     index("channels_guild_position_idx").on(table.guildId, table.position),
-    check("channels_type_check", sql`${table.type} in (0, 1, 4)`),
+    check("channels_type_check", sql`${table.type} in (0, 1, 2, 4)`),
     check(
       "channels_guild_presence_check",
-      sql`((${table.type} in (0, 4) and ${table.guildId} is not null) or (${table.type} = 1 and ${table.guildId} is null))`,
+      sql`((${table.type} in (0, 2, 4) and ${table.guildId} is not null) or (${table.type} = 1 and ${table.guildId} is null))`,
     ),
     check("channels_category_parent_check", sql`(${table.type} <> 4 or ${table.parentId} is null)`),
     check(
       "channels_name_check",
-      sql`((${table.type} = 1 and ${table.name} is null) or (${table.type} in (0, 4) and ${table.name} is not null))`,
+      sql`((${table.type} = 1 and ${table.name} is null) or (${table.type} in (0, 2, 4) and ${table.name} is not null))`,
     ),
   ],
 );
