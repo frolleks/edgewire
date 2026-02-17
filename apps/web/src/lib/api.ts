@@ -10,7 +10,23 @@ import type {
 } from "@discord/types";
 import { apiFetch } from "./http";
 
-export type CurrentUser = UserSummary;
+export type UserTheme = "system" | "light" | "dark";
+
+export type CurrentUserSettings = {
+  theme: UserTheme;
+  compact_mode: boolean;
+  show_timestamps: boolean;
+  locale: string | null;
+};
+
+export type CurrentUser = UserSummary & {
+  banner_url: string | null;
+  bio: string | null;
+  pronouns: string | null;
+  status: string | null;
+  email: string | null;
+  settings: CurrentUserSettings;
+};
 
 export type DmChannel = DmChannelPayload & {
   unread: boolean;
@@ -57,9 +73,22 @@ export type CompleteUploadResponse =
 
 export const api = {
   getMe: () => apiFetch<CurrentUser>("/api/users/@me"),
-  updateProfile: (body: { username?: string; display_name?: string; avatar_url?: string | null }) =>
-    apiFetch<CurrentUser>("/api/users/@me/profile", {
-      method: "PUT",
+  updateProfile: (body: {
+    username?: string;
+    display_name?: string | null;
+    bio?: string | null;
+    pronouns?: string | null;
+    status?: string | null;
+    avatar_url?: string | null;
+    banner_url?: string | null;
+  }) =>
+    apiFetch<CurrentUser>("/api/users/@me", {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  updateSettings: (body: Partial<CurrentUserSettings>) =>
+    apiFetch<CurrentUserSettings>("/api/users/@me/settings", {
+      method: "PATCH",
       body: JSON.stringify(body),
     }),
   searchUsers: (q: string) =>
@@ -256,7 +285,7 @@ export const api = {
     }),
 
   initAvatarUpload: (payload: { filename: string; content_type: string; size: number }) =>
-    apiFetch<UploadInitResponse>("/api/uploads/avatar", {
+    apiFetch<UploadInitResponse>("/api/users/@me/avatar", {
       method: "POST",
       body: JSON.stringify(payload),
     }),

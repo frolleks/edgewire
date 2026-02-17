@@ -3,13 +3,13 @@ import type { BunRequest } from "bun";
 import { and, eq, isNull, lt } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../db";
-import { uploadSessions, users } from "../db/schema";
+import { uploadSessions, userProfiles, users } from "../db/schema";
 import { env } from "../env";
 import { badRequest, empty, forbidden, json, notFound, parseJson, requireAuth } from "../http";
 import { PermissionBits } from "../lib/permissions";
 import { hasChannelPermission } from "../lib/permission-service";
-import { toUserSummary } from "../lib/users";
-import { canAccessChannel, emitToUsers, getUserAudienceIds, nextId, toSummary } from "../runtime";
+import { getUserSummaryById, toUserSummary } from "../lib/users";
+import { broadcastUserUpdate, canAccessChannel, nextId, toSummary } from "../runtime";
 import {
   avatarsArePublic,
   deleteObject,
@@ -302,11 +302,13 @@ export const completeUpload = async (request: BunRequest<"/api/uploads/:uploadId
 
     const currentUser = await db.query.users.findFirst({ where: eq(users.id, me.id) });
 
+    const resolvedAvatarUrl = avatarsArePublic ? toPublicObjectUrl(session.s3Key) : null;
+
     const [updatedUser] = await db
       .update(users)
       .set({
         avatarS3Key: session.s3Key,
-        avatarUrl: avatarsArePublic ? toPublicObjectUrl(session.s3Key) : null,
+        avatarUrl: resolvedAvatarUrl,
       })
       .where(eq(users.id, me.id))
       .returning();
@@ -315,13 +317,20 @@ export const completeUpload = async (request: BunRequest<"/api/uploads/:uploadId
       return notFound(request);
     }
 
+    await db
+      .update(userProfiles)
+      .set({
+        avatarUrl: resolvedAvatarUrl,
+        updatedAt: new Date(),
+      })
+      .where(eq(userProfiles.userId, me.id));
+
     if (currentUser?.avatarS3Key && currentUser.avatarS3Key !== session.s3Key) {
       await bestEffortDeleteObject(currentUser.avatarS3Key);
     }
 
-    const userSummary = toUserSummary(updatedUser);
-    const recipients = await getUserAudienceIds(me.id);
-    emitToUsers(recipients, "USER_UPDATE", toSummary(userSummary));
+    const userSummary = (await getUserSummaryById(me.id)) ?? toUserSummary(updatedUser);
+    await broadcastUserUpdate(me.id, userSummary);
 
     return json(request, {
       upload_id: session.id,

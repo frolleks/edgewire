@@ -12,7 +12,7 @@ import type {
 import { useQueryClient } from "@tanstack/react-query";
 import type { InfiniteData } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
-import { api, type DmChannel, type Guild, type Role, type TypingEvent } from "@/lib/api";
+import { api, type CurrentUser, type DmChannel, type Guild, type Role, type TypingEvent } from "@/lib/api";
 import { GATEWAY_URL } from "@/lib/env";
 import { queryKeys } from "@/lib/query-keys";
 
@@ -441,7 +441,7 @@ export const useGateway = ({ enabled, userId, activeChannelId }: GatewayParams):
           case "USER_UPDATE": {
             const user = packet.d as UserSummary;
 
-            queryClient.setQueryData<UserSummary>(queryKeys.me, old =>
+            queryClient.setQueryData<CurrentUser>(queryKeys.me, old =>
               old && old.id === user.id ? { ...old, ...user } : old,
             );
 
@@ -479,6 +479,21 @@ export const useGateway = ({ enabled, userId, activeChannelId }: GatewayParams):
                         : member,
                     )
                   : old,
+            );
+            break;
+          }
+          case "USER_SETTINGS_UPDATE": {
+            const settings = packet.d as CurrentUser["settings"];
+            queryClient.setQueryData<CurrentUser>(queryKeys.me, old =>
+              old
+                ? {
+                    ...old,
+                    settings: {
+                      ...old.settings,
+                      ...settings,
+                    },
+                  }
+                : old,
             );
             break;
           }

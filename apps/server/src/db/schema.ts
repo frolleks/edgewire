@@ -26,6 +26,43 @@ export const users = pgTable(
   table => [uniqueIndex("users_username_unique").on(table.username)],
 );
 
+export const userThemeEnum = pgEnum("user_theme", ["system", "light", "dark"]);
+
+export const userProfiles = pgTable(
+  "user_profiles",
+  {
+    userId: text("user_id")
+      .primaryKey()
+      .references(() => users.id, { onDelete: "cascade" }),
+    username: text("username").notNull(),
+    displayName: text("display_name"),
+    avatarUrl: text("avatar_url"),
+    bannerUrl: text("banner_url"),
+    bio: text("bio"),
+    pronouns: text("pronouns"),
+    status: text("status"),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  table => [
+    uniqueIndex("user_profiles_username_unique").on(table.username),
+    index("user_profiles_username_idx").on(table.username),
+  ],
+);
+
+export const userSettings = pgTable(
+  "user_settings",
+  {
+    userId: text("user_id")
+      .primaryKey()
+      .references(() => users.id, { onDelete: "cascade" }),
+    theme: userThemeEnum("theme").notNull().default("system"),
+    compactMode: boolean("compact_mode").notNull().default(false),
+    showTimestamps: boolean("show_timestamps").notNull().default(true),
+    locale: text("locale"),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+);
+
 export const guildMemberRoleEnum = pgEnum("guild_member_role", ["OWNER", "MEMBER"]);
 
 export const guilds = pgTable(
@@ -297,6 +334,8 @@ export const invites = pgTable(
 
 export const schema = {
   users,
+  userProfiles,
+  userSettings,
   guilds,
   guildRoles,
   guildMembers,

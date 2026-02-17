@@ -12,6 +12,7 @@ Implemented scope:
 - Guild categories + text channels
 - Guild roles + member role assignment
 - Guild/server settings update flow
+- User settings (account, profile, appearance)
 - Channel permission overwrites
 - Permission-aware route enforcement (guild + channel)
 - Sidebar category/channel drag-and-drop reorder + move
@@ -63,6 +64,11 @@ Apply migrations (includes DM -> unified `channels` migration + guild tables):
 ```bash
 bun run db:migrate
 ```
+
+Latest migration also adds:
+- `user_profiles`
+- `user_settings`
+- `user_theme` enum
 
 Optional:
 
@@ -125,7 +131,10 @@ All routes require authentication except Better Auth endpoints.
 
 ### Users
 - `GET /api/users/@me`
+- `PATCH /api/users/@me`
 - `PUT /api/users/@me/profile`
+- `PATCH /api/users/@me/settings`
+- `POST /api/users/@me/avatar`
 - `GET /api/users?q=...`
 
 ### DM Channels
@@ -212,6 +221,8 @@ Dispatch events:
 - `MESSAGE_DELETE`
 - `TYPING_START`
 - `READ_STATE_UPDATE`
+- `USER_UPDATE`
+- `USER_SETTINGS_UPDATE`
 
 READY behavior:
 - includes `private_channels` (DMs)
@@ -227,8 +238,22 @@ READY behavior:
 - `guild_roles` table stores Discord-like role fields; `@everyone` is created per guild with `id=guild_id`.
 - `guild_member_roles` stores many-to-many member role assignments (with implicit `@everyone`).
 - `channel_permission_overwrites` stores per-channel role/member overwrites (`allow`/`deny` as stringified bitfields).
+- Better Auth identity remains canonical in `auth_users` (`id`, `email`, `name`, `image`).
+- App-owned user data is stored in:
+  - `user_profiles` (username + profile fields)
+  - `user_settings` (theme, compact mode, timestamps, locale)
+- Legacy `users` remains for existing foreign keys/joins and is kept in sync with profile identity fields.
 - Guild access is enforced via `guild_members`.
 - DM access is enforced via `channel_members`.
 - Permission math uses `BigInt` with Discord-like overwrite ordering.
 - IDs are snowflake-like values serialized as strings.
 - Better Auth Drizzle mapping keys are snake_case (`auth_users`, `auth_sessions`, `auth_accounts`, `auth_verifications`).
+
+## User Settings + Upload Notes
+
+- `GET /api/users/@me` returns merged account/profile/preferences data.
+- `PATCH /api/users/@me` updates profile/account fields for the authenticated user only.
+- `PATCH /api/users/@me/settings` updates appearance/preferences and dispatches `USER_SETTINGS_UPDATE` to the user's own sessions.
+- Avatar upload init is available at `POST /api/users/@me/avatar` (alias to upload init flow), completed via `POST /api/uploads/:uploadId/complete`.
+- Avatar URL resolution uses either `FILES_PUBLIC_BASE_URL` public URLs or presigned download URLs from stored object keys.
+- Storage object paths use `avatars/<userId>/...` for avatars and `attachments/<channelOrUser>/<year>/<month>/...` for attachments.

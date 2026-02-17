@@ -40,7 +40,6 @@ export const HEARTBEAT_INTERVAL_MS = 25_000;
 export const MESSAGE_MAX_LENGTH = 2_000;
 export const MAX_NAME_LENGTH = 100;
 export const MAX_TOPIC_LENGTH = 1_024;
-export const USERNAME_REGEX = /^[a-zA-Z0-9_]{3,32}$/;
 export const ID_REGEX = /^\d+$/;
 export const INVITE_CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
 
@@ -314,6 +313,15 @@ export const getUserAudienceIds = async (userId: string): Promise<string[]> => {
   }
 
   return [...audience];
+};
+
+export const broadcastUserUpdate = async (userId: string, user: UserSummary): Promise<void> => {
+  const recipients = await getUserAudienceIds(userId);
+  emitToUsers(recipients, "USER_UPDATE", toSummary(user));
+};
+
+export const emitUserSettingsUpdate = (userId: string, settings: unknown): void => {
+  emitToUsers([userId], "USER_SETTINGS_UPDATE", settings);
 };
 
 export const emitToGuild = async (guildId: string, event: string, data: unknown): Promise<void> => {

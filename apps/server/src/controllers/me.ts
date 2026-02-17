@@ -1,14 +1,14 @@
 import { ChannelType } from "@discord/types";
 import { eq } from "drizzle-orm";
 import { db } from "../db";
-import { channelMembers, channels, messageReads, users } from "../db/schema";
+import { channelMembers, channels, messageReads, userProfiles, userSettings, users } from "../db/schema";
 import { badRequest, json, notFound, parseJson, requireAuth } from "../http";
-import { getUserSummaryById, toUserSummary } from "../lib/users";
+import { getCurrentUserById, getUserSummaryById, isValidUsername, normalizeUsernameForUpdate } from "../lib/users";
 import {
-  USERNAME_REGEX,
+  broadcastUserUpdate,
   emitToUsers,
+  emitUserSettingsUpdate,
   findExistingDmChannel,
-  getUserAudienceIds,
   getUserGuilds,
   listDmChannelsForUser,
   nextId,
@@ -16,13 +16,226 @@ import {
   toSummary,
 } from "../runtime";
 
+type PatchMeBody = {
+  username?: unknown;
+  display_name?: unknown;
+  bio?: unknown;
+  pronouns?: unknown;
+  status?: unknown;
+  avatar_url?: unknown;
+  banner_url?: unknown;
+};
+
+type PatchMeSettingsBody = {
+  theme?: unknown;
+  compact_mode?: unknown;
+  show_timestamps?: unknown;
+  locale?: unknown;
+};
+
+const USER_THEME_VALUES = new Set(["system", "light", "dark"]);
+
+const ensureSupplementaryRows = async (user: { id: string; username: string; display_name: string; avatar_url: string | null }) => {
+  await db
+    .insert(userProfiles)
+    .values({
+      userId: user.id,
+      username: user.username,
+      displayName: user.display_name,
+      avatarUrl: user.avatar_url,
+      bannerUrl: null,
+      bio: null,
+      pronouns: null,
+      status: null,
+    })
+    .onConflictDoNothing({ target: userProfiles.userId });
+
+  await db
+    .insert(userSettings)
+    .values({
+      userId: user.id,
+    })
+    .onConflictDoNothing({ target: userSettings.userId });
+};
+
+const parseNullableStringField = (
+  request: Request,
+  value: unknown,
+  field: string,
+  maxLength: number,
+  options?: { minLength?: number; emptyAsNull?: boolean },
+): Response | string | null => {
+  if (value === null) {
+    return null;
+  }
+
+  if (typeof value !== "string") {
+    return badRequest(request, `${field} must be a string or null.`);
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    if (options?.emptyAsNull) {
+      return null;
+    }
+    return badRequest(request, `${field} cannot be empty.`);
+  }
+
+  if (options?.minLength !== undefined && trimmed.length < options.minLength) {
+    return badRequest(request, `${field} must be at least ${options.minLength} characters.`);
+  }
+
+  if (trimmed.length > maxLength) {
+    return badRequest(request, `${field} must be at most ${maxLength} characters.`);
+  }
+
+  return trimmed;
+};
+
+const applyProfilePatch = async (
+  request: Request,
+  me: { id: string; username: string; display_name: string; avatar_url: string | null },
+  body: PatchMeBody,
+): Promise<Response> => {
+  await ensureSupplementaryRows(me);
+
+  const profileUpdates: Partial<typeof userProfiles.$inferInsert> = {};
+  const legacyUserUpdates: Partial<typeof users.$inferInsert> = {};
+
+  if (body.username !== undefined) {
+    if (typeof body.username !== "string") {
+      return badRequest(request, "username must be a string.");
+    }
+
+    const normalized = normalizeUsernameForUpdate(body.username);
+    if (!isValidUsername(normalized)) {
+      return badRequest(request, "username must be 2-32 chars matching /^[a-z0-9_.]+$/");
+    }
+
+    profileUpdates.username = normalized;
+    legacyUserUpdates.username = normalized;
+  }
+
+  if (body.display_name !== undefined) {
+    const parsed = parseNullableStringField(request, body.display_name, "display_name", 32, { minLength: 1 });
+    if (parsed instanceof Response) {
+      return parsed;
+    }
+
+    profileUpdates.displayName = parsed;
+    legacyUserUpdates.displayName = parsed ?? me.display_name;
+  }
+
+  if (body.bio !== undefined) {
+    const parsed = parseNullableStringField(request, body.bio, "bio", 190, { emptyAsNull: true });
+    if (parsed instanceof Response) {
+      return parsed;
+    }
+    profileUpdates.bio = parsed;
+  }
+
+  if (body.pronouns !== undefined) {
+    const parsed = parseNullableStringField(request, body.pronouns, "pronouns", 32, { emptyAsNull: true });
+    if (parsed instanceof Response) {
+      return parsed;
+    }
+    profileUpdates.pronouns = parsed;
+  }
+
+  if (body.status !== undefined) {
+    const parsed = parseNullableStringField(request, body.status, "status", 60, { emptyAsNull: true });
+    if (parsed instanceof Response) {
+      return parsed;
+    }
+    profileUpdates.status = parsed;
+  }
+
+  if (body.avatar_url !== undefined) {
+    const parsed = parseNullableStringField(request, body.avatar_url, "avatar_url", 2_000, { emptyAsNull: true });
+    if (parsed instanceof Response) {
+      return parsed;
+    }
+
+    profileUpdates.avatarUrl = parsed;
+    legacyUserUpdates.avatarUrl = parsed;
+    legacyUserUpdates.avatarS3Key = null;
+  }
+
+  if (body.banner_url !== undefined) {
+    const parsed = parseNullableStringField(request, body.banner_url, "banner_url", 2_000, { emptyAsNull: true });
+    if (parsed instanceof Response) {
+      return parsed;
+    }
+    profileUpdates.bannerUrl = parsed;
+  }
+
+  if (Object.keys(profileUpdates).length === 0 && Object.keys(legacyUserUpdates).length === 0) {
+    return badRequest(request, "No profile fields provided.");
+  }
+
+  try {
+    await db.transaction(async tx => {
+      if (Object.keys(profileUpdates).length > 0) {
+        await tx
+          .update(userProfiles)
+          .set({
+            ...profileUpdates,
+            updatedAt: new Date(),
+          })
+          .where(eq(userProfiles.userId, me.id));
+      }
+
+      if (Object.keys(legacyUserUpdates).length > 0) {
+        await tx.update(users).set(legacyUserUpdates).where(eq(users.id, me.id));
+      }
+    });
+  } catch (error) {
+    const message = String(error);
+    if (message.includes("users_username_unique") || message.includes("user_profiles_username_unique")) {
+      return json(request, { error: "Username is already taken." }, { status: 409 });
+    }
+    throw error;
+  }
+
+  const updated = await getCurrentUserById(me.id);
+  if (!updated) {
+    return notFound(request);
+  }
+
+  const summary = await getUserSummaryById(me.id);
+  if (summary) {
+    await broadcastUserUpdate(me.id, summary);
+  }
+
+  return json(request, updated);
+};
+
 export const getMe = async (request: Request): Promise<Response> => {
   const authResult = await requireAuth(request);
   if (authResult instanceof Response) {
     return authResult;
   }
 
-  return json(request, authResult.user);
+  const current = await getCurrentUserById(authResult.user.id);
+  if (!current) {
+    return notFound(request);
+  }
+
+  return json(request, current);
+};
+
+export const patchMe = async (request: Request): Promise<Response> => {
+  const authResult = await requireAuth(request);
+  if (authResult instanceof Response) {
+    return authResult;
+  }
+
+  const body = await parseJson<PatchMeBody>(request);
+  if (!body || typeof body !== "object") {
+    return badRequest(request, "Invalid JSON body.");
+  }
+
+  return applyProfilePatch(request, authResult.user, body);
 };
 
 export const updateMeProfile = async (request: Request): Promise<Response> => {
@@ -31,61 +244,82 @@ export const updateMeProfile = async (request: Request): Promise<Response> => {
     return authResult;
   }
 
-  const me = authResult.user;
-  const body = await parseJson<{
-    username?: string;
-    display_name?: string;
-    avatar_url?: string | null;
-  }>(request);
-
-  if (!body) {
+  const body = await parseJson<PatchMeBody>(request);
+  if (!body || typeof body !== "object") {
     return badRequest(request, "Invalid JSON body.");
   }
 
-  const updates: Partial<typeof users.$inferInsert> = {};
+  return applyProfilePatch(request, authResult.user, body);
+};
 
-  if (body.username !== undefined) {
-    if (!USERNAME_REGEX.test(body.username)) {
-      return badRequest(request, "username must match /^[a-zA-Z0-9_]{3,32}$/");
-    }
-    updates.username = body.username;
+export const patchMeSettings = async (request: Request): Promise<Response> => {
+  const authResult = await requireAuth(request);
+  if (authResult instanceof Response) {
+    return authResult;
   }
 
-  if (body.display_name !== undefined) {
-    const value = body.display_name.trim();
-    if (!value) {
-      return badRequest(request, "display_name cannot be empty.");
-    }
-    updates.displayName = value.slice(0, 64);
+  const me = authResult.user;
+  const body = await parseJson<PatchMeSettingsBody>(request);
+  if (!body || typeof body !== "object") {
+    return badRequest(request, "Invalid JSON body.");
   }
 
-  if (body.avatar_url !== undefined) {
-    updates.avatarUrl = body.avatar_url;
-    updates.avatarS3Key = null;
+  await ensureSupplementaryRows(me);
+
+  const updates: Partial<typeof userSettings.$inferInsert> = {};
+
+  if (body.theme !== undefined) {
+    if (typeof body.theme !== "string" || !USER_THEME_VALUES.has(body.theme)) {
+      return badRequest(request, "theme must be one of: system, light, dark.");
+    }
+    updates.theme = body.theme;
+  }
+
+  if (body.compact_mode !== undefined) {
+    if (typeof body.compact_mode !== "boolean") {
+      return badRequest(request, "compact_mode must be a boolean.");
+    }
+    updates.compactMode = body.compact_mode;
+  }
+
+  if (body.show_timestamps !== undefined) {
+    if (typeof body.show_timestamps !== "boolean") {
+      return badRequest(request, "show_timestamps must be a boolean.");
+    }
+    updates.showTimestamps = body.show_timestamps;
+  }
+
+  if (body.locale !== undefined) {
+    if (body.locale !== null && typeof body.locale !== "string") {
+      return badRequest(request, "locale must be a string or null.");
+    }
+
+    const locale =
+      typeof body.locale === "string"
+        ? body.locale.trim().slice(0, 32) || null
+        : null;
+    updates.locale = locale;
   }
 
   if (Object.keys(updates).length === 0) {
-    return badRequest(request, "No profile fields provided.");
+    return badRequest(request, "No settings fields provided.");
   }
 
-  try {
-    const [updated] = await db.update(users).set(updates).where(eq(users.id, me.id)).returning();
+  await db
+    .update(userSettings)
+    .set({
+      ...updates,
+      updatedAt: new Date(),
+    })
+    .where(eq(userSettings.userId, me.id));
 
-    if (!updated) {
-      return notFound(request);
-    }
-
-    const summary = toUserSummary(updated);
-    const recipients = await getUserAudienceIds(me.id);
-    emitToUsers(recipients, "USER_UPDATE", toSummary(summary));
-
-    return json(request, toSummary(summary));
-  } catch (error) {
-    if (String(error).includes("users_username_unique")) {
-      return badRequest(request, "Username is already taken.");
-    }
-    throw error;
+  const current = await getCurrentUserById(me.id);
+  if (!current) {
+    return notFound(request);
   }
+
+  emitUserSettingsUpdate(me.id, current.settings);
+  return json(request, current.settings);
 };
 
 export const listMyChannels = async (request: Request): Promise<Response> => {
@@ -195,3 +429,4 @@ export const listMyGuilds = async (request: Request): Promise<Response> => {
   const guildList = await getUserGuilds(authResult.user.id);
   return json(request, guildList);
 };
+

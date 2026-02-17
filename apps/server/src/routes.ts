@@ -15,7 +15,15 @@ import {
 } from "./controllers/guilds";
 import { getHealth } from "./controllers/health";
 import { acceptInvite, createChannelInvite, getInvite } from "./controllers/invites";
-import { createMyChannel, getMe, listMyChannels, listMyGuilds, updateMeProfile } from "./controllers/me";
+import {
+  createMyChannel,
+  getMe,
+  listMyChannels,
+  listMyGuilds,
+  patchMe,
+  patchMeSettings,
+  updateMeProfile,
+} from "./controllers/me";
 import {
   createChannelMessage,
   deleteChannelMessage,
@@ -73,7 +81,7 @@ export const routes = {
     GET: safe(getMe),
     POST: auth404,
     PUT: auth404,
-    PATCH: auth404,
+    PATCH: safe(patchMe),
     DELETE: auth404,
     OPTIONS: corsPreflight,
   },
@@ -82,6 +90,14 @@ export const routes = {
     GET: auth404,
     POST: auth404,
     PATCH: auth404,
+    DELETE: auth404,
+    OPTIONS: corsPreflight,
+  },
+  "/api/users/@me/settings": {
+    PATCH: safe(patchMeSettings),
+    GET: auth404,
+    POST: auth404,
+    PUT: auth404,
     DELETE: auth404,
     OPTIONS: corsPreflight,
   },
@@ -222,6 +238,14 @@ export const routes = {
     OPTIONS: corsPreflight,
   },
   "/api/uploads/avatar": {
+    POST: safe(initiateAvatarUpload),
+    GET: auth404,
+    PUT: auth404,
+    PATCH: auth404,
+    DELETE: auth404,
+    OPTIONS: corsPreflight,
+  },
+  "/api/users/@me/avatar": {
     POST: safe(initiateAvatarUpload),
     GET: auth404,
     PUT: auth404,
