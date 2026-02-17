@@ -11,7 +11,6 @@ type MessageListProps = {
   routeMode: "dm" | "guild";
   currentUserId: string | null;
   activeGuildChannelPermissions: bigint;
-  typingIndicator: boolean;
   onLoadOlder: () => void;
   canLoadOlder: boolean;
   isLoadingOlder: boolean;
@@ -30,7 +29,6 @@ export function MessageList({
   routeMode,
   currentUserId,
   activeGuildChannelPermissions,
-  typingIndicator,
   onLoadOlder,
   canLoadOlder,
   isLoadingOlder,
@@ -73,10 +71,6 @@ export function MessageList({
               onDeleteMessage={onDeleteMessage}
             />
           ))}
-
-          {typingIndicator ? (
-            <p className="text-xs italic">Someone is typing...</p>
-          ) : null}
         </div>
         <div ref={bottomRef} className="h-0" />
       </div>

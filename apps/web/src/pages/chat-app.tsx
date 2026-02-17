@@ -754,6 +754,63 @@ export function ChatApp() {
     () => [...new Set((typingEvents ?? []).map((event) => event.user_id))],
     [typingEvents],
   );
+  const typingUserNames = useMemo(() => {
+    if (typingUserIds.length === 0) {
+      return [];
+    }
+
+    const knownNames = new Map<string, string>();
+
+    const addKnownUser = (
+      user:
+        | Pick<UserSummary, "id" | "display_name" | "username">
+        | null
+        | undefined,
+    ): void => {
+      if (!user) {
+        return;
+      }
+
+      const name = user.display_name?.trim() || user.username?.trim();
+      if (!name) {
+        return;
+      }
+
+      knownNames.set(user.id, name);
+    };
+
+    addKnownUser(meQuery.data);
+
+    for (const message of chronologicalMessages) {
+      addKnownUser(message.author);
+    }
+
+    for (const channel of dmChannels) {
+      for (const recipient of channel.recipients) {
+        addKnownUser(recipient);
+      }
+      addKnownUser(channel.last_message?.author);
+    }
+
+    addKnownUser(activeDm?.recipients[0]);
+
+    return typingUserIds.map((userId) => knownNames.get(userId) ?? "Someone");
+  }, [activeDm, chronologicalMessages, dmChannels, meQuery.data, typingUserIds]);
+  const typingText = useMemo(() => {
+    const uniqueTypingUserNames = [...new Set(typingUserNames)];
+    if (uniqueTypingUserNames.length === 0) {
+      return null;
+    }
+    if (uniqueTypingUserNames.length === 1) {
+      return `${uniqueTypingUserNames[0]} is typing...`;
+    }
+    if (uniqueTypingUserNames.length === 2) {
+      return `${uniqueTypingUserNames[0]} and ${uniqueTypingUserNames[1]} are typing...`;
+    }
+
+    const [first, second, ...rest] = uniqueTypingUserNames;
+    return `${first}, ${second}, and ${rest.length} others are typing...`;
+  }, [typingUserNames]);
   const profileRoles = useMemo(() => {
     if (
       !profileDialog?.guildId ||
@@ -1199,7 +1256,6 @@ export function ChatApp() {
                 routeMode={route.mode}
                 currentUserId={me?.id ?? sessionUser?.id ?? null}
                 activeGuildChannelPermissions={activeGuildChannelPermissions}
-                typingIndicator={typingUserIds.length > 0}
                 onLoadOlder={() => messagesQuery.fetchNextPage()}
                 canLoadOlder={Boolean(messagesQuery.hasNextPage)}
                 isLoadingOlder={messagesQuery.isFetchingNextPage}
@@ -1218,6 +1274,12 @@ export function ChatApp() {
                 containerRef={messageListContainerRef}
                 bottomRef={listBottomRef}
               />
+
+              {typingText ? (
+                <p className="shrink-0 bg-card px-4 pt-1 text-xs italic text-muted-foreground">
+                  {typingText}
+                </p>
+              ) : null}
 
               <Composer
                 value={composerValue}
