@@ -1,9 +1,9 @@
-import type { GuildChannelPayload, MessagePayload } from "@discord/types";
+import type { GuildChannelPayload, MessagePayload, UserSummary } from "@discord/types";
 import { ChannelType } from "@discord/types";
 import { QueryClient, QueryClientProvider, useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { InfiniteData } from "@tanstack/react-query";
-import { Home, Plus, X } from "lucide-react";
-import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { Home, Paperclip, Plus, X } from "lucide-react";
+import { type ChangeEvent, type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Link, Navigate, Outlet, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 import { Toaster, toast } from "sonner";
 import GuildChannelTree from "@/components/guild-channel-tree";
@@ -22,9 +22,10 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { useGateway } from "@/hooks/use-gateway";
 import { authClient } from "@/lib/auth-client";
-import { api, type CurrentUser, type DmChannel, type Guild, type Invite, type TypingEvent } from "@/lib/api";
+import { api, type CurrentUser, type DmChannel, type Guild, type Invite, type Role, type TypingEvent } from "@/lib/api";
 import { PermissionBits, computeChannelPermissions, hasPermission, parsePermissions } from "@/lib/permissions";
 import { queryKeys } from "@/lib/query-keys";
+import { completeUpload, initAttachmentUpload, initAvatarUpload, putToS3, runUploadsWithLimit } from "@/lib/uploads";
 import "./index.css";
 
 const queryClient = new QueryClient({
@@ -47,6 +48,22 @@ type AppRoute = {
   mode: "dm" | "guild";
   guildId: string | null;
   channelId: string | null;
+};
+
+type ProfileDialogState = {
+  user: UserSummary;
+  guildId: string | null;
+};
+
+type ComposerAttachment = {
+  local_id: string;
+  file: File | null;
+  filename: string;
+  size: number;
+  content_type: string;
+  status: "queued" | "uploading" | "uploaded" | "failed";
+  upload_id?: string;
+  error?: string;
 };
 
 const getSessionUser = (data: unknown): SessionUser | null => {
@@ -93,6 +110,23 @@ const formatTime = (timestamp: string): string =>
     minute: "2-digit",
   });
 
+const formatBytes = (value: number): string => {
+  if (value < 1024) {
+    return `${value} B`;
+  }
+
+  if (value < 1024 * 1024) {
+    return `${(value / 1024).toFixed(1)} KB`;
+  }
+
+  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+};
+
+const getDisplayInitial = (displayName: string): string =>
+  displayName.trim().slice(0, 1).toUpperCase() || "?";
+
+const isImageAttachment = (contentType?: string | null): boolean => Boolean(contentType?.startsWith("image/"));
+
 const dedupeChronological = (messages: MessagePayload[]): MessagePayload[] => {
   const seen = new Set<string>();
   const next: MessagePayload[] = [];
@@ -129,6 +163,13 @@ const dedupeById = <T extends { id: string }>(items: T[]): T[] => {
 const byPositionThenId = (a: GuildChannelPayload, b: GuildChannelPayload): number => {
   if (a.position !== b.position) {
     return a.position - b.position;
+  }
+  return a.id.localeCompare(b.id);
+};
+
+const roleSortDesc = (a: Role, b: Role): number => {
+  if (a.position !== b.position) {
+    return b.position - a.position;
   }
   return a.id.localeCompare(b.id);
 };
@@ -447,9 +488,16 @@ const ChatApp = () => {
   const [inviteOpen, setInviteOpen] = useState(false);
   const [inviteResult, setInviteResult] = useState<Invite | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [profileDialog, setProfileDialog] = useState<ProfileDialogState | null>(null);
+  const [profileSettingsOpen, setProfileSettingsOpen] = useState(false);
+  const [isAvatarUploading, setIsAvatarUploading] = useState(false);
+  const [composerAttachments, setComposerAttachments] = useState<ComposerAttachment[]>([]);
+  const [isSendingMessage, setIsSendingMessage] = useState(false);
 
   const typingThrottleRef = useRef(0);
   const listBottomRef = useRef<HTMLDivElement>(null);
+  const avatarInputRef = useRef<HTMLInputElement>(null);
+  const attachmentInputRef = useRef<HTMLInputElement>(null);
 
   const meQuery = useQuery({
     queryKey: queryKeys.me,
@@ -479,6 +527,18 @@ const ChatApp = () => {
     queryKey: queryKeys.guildPermissions(route.guildId ?? "none"),
     queryFn: () => api.getMyGuildPermissions(route.guildId!),
     enabled: route.mode === "guild" && Boolean(route.guildId),
+  });
+
+  const profileMemberQuery = useQuery({
+    queryKey: queryKeys.guildMember(profileDialog?.guildId ?? "none", profileDialog?.user.id ?? "none"),
+    queryFn: () => api.getGuildMember(profileDialog!.guildId!, profileDialog!.user.id),
+    enabled: Boolean(profileDialog?.guildId && profileDialog?.user.id),
+  });
+
+  const profileRolesQuery = useQuery({
+    queryKey: queryKeys.guildRoles(profileDialog?.guildId ?? "none"),
+    queryFn: () => api.listGuildRoles(profileDialog!.guildId!),
+    enabled: Boolean(profileDialog?.guildId),
   });
 
   const usersSearchQuery = useQuery({
@@ -665,8 +725,11 @@ const ChatApp = () => {
   });
 
   const sendMessageMutation = useMutation({
-    mutationFn: (payload: { channelId: string; content: string }) =>
-      api.createMessage(payload.channelId, payload.content),
+    mutationFn: (payload: { channelId: string; content?: string; attachmentUploadIds?: string[] }) =>
+      api.createMessage(payload.channelId, {
+        content: payload.content,
+        attachment_upload_ids: payload.attachmentUploadIds,
+      }),
     onSuccess: message => {
       queryClient.setQueryData<InfiniteData<MessagePayload[]>>(
         queryKeys.messages(message.channel_id),
@@ -708,9 +771,6 @@ const ChatApp = () => {
           return [updatedChannel, ...next.filter((_, i) => i !== index)];
         });
       }
-    },
-    onError: error => {
-      toast.error(error instanceof Error ? error.message : "Could not send message.");
     },
   });
 
@@ -757,6 +817,10 @@ const ChatApp = () => {
     listBottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [newestMessageId]);
 
+  useEffect(() => {
+    setComposerAttachments([]);
+  }, [activeMessageChannelId]);
+
   const messagesNewestFirst = messagesData?.pages.flatMap(page => page) ?? [];
   const chronologicalMessages = useMemo(
     () => dedupeChronological(messagesNewestFirst),
@@ -765,6 +829,17 @@ const ChatApp = () => {
 
   const typingEvents = typingQuery.data;
   const typingUserIds = new Set(typingEvents.map(event => event.user_id));
+  const profileRoles = useMemo(() => {
+    if (!profileDialog?.guildId || !profileMemberQuery.data || !profileRolesQuery.data) {
+      return [];
+    }
+
+    const roleById = new Map(profileRolesQuery.data.map(role => [role.id, role]));
+    return profileMemberQuery.data.roles
+      .map(roleId => roleById.get(roleId))
+      .filter((role): role is Role => Boolean(role))
+      .sort(roleSortDesc);
+  }, [profileDialog?.guildId, profileMemberQuery.data, profileRolesQuery.data]);
 
   const categoryOptions = guildChannels.filter(channel => channel.type === ChannelType.GUILD_CATEGORY);
   const activeGuildChannelPermissions = useMemo(() => {
@@ -794,18 +869,159 @@ const ChatApp = () => {
       activeGuildChannel?.type === ChannelType.GUILD_TEXT &&
       hasPermission(activeGuildChannelPermissions, PermissionBits.SEND_MESSAGES));
 
+  const isUploadingAttachments = composerAttachments.some(attachment => attachment.status === "uploading");
+
+  const updateComposerAttachment = (
+    localId: string,
+    patch: Partial<ComposerAttachment>,
+  ): void => {
+    setComposerAttachments(old =>
+      old.map(attachment =>
+        attachment.local_id === localId
+          ? {
+              ...attachment,
+              ...patch,
+            }
+          : attachment,
+      ),
+    );
+  };
+
+  const handleAvatarFileChange = async (event: ChangeEvent<HTMLInputElement>): Promise<void> => {
+    const file = event.target.files?.[0] ?? null;
+    event.target.value = "";
+
+    if (!file || isAvatarUploading) {
+      return;
+    }
+
+    setIsAvatarUploading(true);
+    try {
+      const init = await initAvatarUpload(file);
+      await putToS3(init.put_url, file, init.headers);
+      const completed = await completeUpload(init.upload_id);
+      if (completed.kind !== "avatar") {
+        throw new Error("Unexpected avatar upload completion response.");
+      }
+
+      queryClient.setQueryData<CurrentUser>(queryKeys.me, completed.user as CurrentUser);
+      toast.success("Avatar updated.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not update avatar.");
+    } finally {
+      setIsAvatarUploading(false);
+    }
+  };
+
+  const handleAttachmentInputChange = (event: ChangeEvent<HTMLInputElement>): void => {
+    const files = Array.from(event.target.files ?? []);
+    event.target.value = "";
+    if (files.length === 0) {
+      return;
+    }
+
+    setComposerAttachments(old => [
+      ...old,
+      ...files.map(file => ({
+        local_id: crypto.randomUUID(),
+        file,
+        filename: file.name,
+        size: file.size,
+        content_type: file.type || "application/octet-stream",
+        status: "queued" as const,
+      })),
+    ]);
+  };
+
+  const removeComposerAttachment = (localId: string): void => {
+    if (isSendingMessage || isUploadingAttachments) {
+      return;
+    }
+    setComposerAttachments(old => old.filter(attachment => attachment.local_id !== localId));
+  };
+
+  const uploadComposerAttachments = async (channelId: string): Promise<string[]> => {
+    const current = [...composerAttachments];
+    const uploadIds: string[] = [];
+    const pending = current.filter(attachment => !attachment.upload_id);
+
+    for (const attachment of current) {
+      if (attachment.upload_id) {
+        uploadIds.push(attachment.upload_id);
+      }
+    }
+
+    const failed = new Set<string>();
+    await runUploadsWithLimit(pending, async attachment => {
+      if (!attachment.file) {
+        failed.add(attachment.local_id);
+        updateComposerAttachment(attachment.local_id, {
+          status: "failed",
+          error: "Missing local file reference.",
+        });
+        return;
+      }
+
+      updateComposerAttachment(attachment.local_id, {
+        status: "uploading",
+        error: undefined,
+      });
+
+      try {
+        const init = await initAttachmentUpload(channelId, attachment.file);
+        await putToS3(init.put_url, attachment.file, init.headers);
+        const completed = await completeUpload(init.upload_id);
+        if (completed.kind !== "attachment") {
+          throw new Error("Unexpected attachment upload completion response.");
+        }
+
+        uploadIds.push(completed.upload_id);
+        updateComposerAttachment(attachment.local_id, {
+          status: "uploaded",
+          upload_id: completed.upload_id,
+          error: undefined,
+        });
+      } catch (error) {
+        failed.add(attachment.local_id);
+        updateComposerAttachment(attachment.local_id, {
+          status: "failed",
+          error: error instanceof Error ? error.message : "Upload failed.",
+        });
+      }
+    });
+
+    if (failed.size > 0) {
+      throw new Error("Some attachments failed to upload.");
+    }
+
+    return [...new Set(uploadIds)];
+  };
+
   const sendMessage = async (): Promise<void> => {
-    if (!activeMessageChannelId || !canSendInActiveChannel) {
+    if (!activeMessageChannelId || !canSendInActiveChannel || isSendingMessage) {
       return;
     }
 
     const content = composerValue.trim();
-    if (!content) {
+    if (!content && composerAttachments.length === 0) {
       return;
     }
 
-    await sendMessageMutation.mutateAsync({ channelId: activeMessageChannelId, content });
-    setComposerValue("");
+    setIsSendingMessage(true);
+    try {
+      const attachmentUploadIds = await uploadComposerAttachments(activeMessageChannelId);
+      await sendMessageMutation.mutateAsync({
+        channelId: activeMessageChannelId,
+        content: content || undefined,
+        attachmentUploadIds: attachmentUploadIds.length > 0 ? attachmentUploadIds : undefined,
+      });
+      setComposerValue("");
+      setComposerAttachments([]);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not send message.");
+    } finally {
+      setIsSendingMessage(false);
+    }
   };
 
   const triggerTyping = (): void => {
@@ -826,6 +1042,13 @@ const ChatApp = () => {
     await authClient.signOut();
     queryClient.clear();
     navigate("/login", { replace: true });
+  };
+
+  const openProfile = (user: UserSummary): void => {
+    setProfileDialog({
+      user,
+      guildId: route.mode === "guild" ? route.guildId : null,
+    });
   };
 
   const openInvite = (): void => {
@@ -958,7 +1181,12 @@ const ChatApp = () => {
                         <span className="font-medium truncate">{recipient?.display_name ?? "Unknown"}</span>
                         {channel.unread ? <span className="h-2 w-2 rounded-full bg-primary" /> : null}
                       </div>
-                      <p className="text-xs truncate mt-1">{channel.last_message?.content ?? "No messages yet"}</p>
+                      <p className="text-xs truncate mt-1">
+                        {channel.last_message?.content ||
+                          (channel.last_message && channel.last_message.attachments.length > 0
+                            ? "Attachment"
+                            : "No messages yet")}
+                      </p>
                     </Link>
                   );
                 })}
@@ -1011,14 +1239,32 @@ const ChatApp = () => {
             </>
           )}
 
-          <div className="border-t px-3 py-3 flex items-center justify-between gap-3">
-            <div className="min-w-0">
-              <p className="text-sm font-semibold truncate">{me?.display_name ?? sessionUser?.name ?? "You"}</p>
-              <p className="text-xs truncate">@{me?.username ?? "loading"}</p>
+          <div className="border-t px-3 py-3 flex items-center justify-between gap-2">
+            <div className="min-w-0 flex items-center gap-2">
+              <div className="h-8 w-8 shrink-0 overflow-hidden rounded-full bg-muted grid place-items-center text-xs font-semibold uppercase">
+                {me?.avatar_url ? (
+                  <img
+                    src={me.avatar_url}
+                    alt={`${me.display_name} avatar`}
+                    className="h-full w-full object-cover"
+                  />
+                ) : (
+                  getDisplayInitial(me?.display_name ?? sessionUser?.name ?? "You")
+                )}
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-semibold truncate">{me?.display_name ?? sessionUser?.name ?? "You"}</p>
+                <p className="text-xs truncate">@{me?.username ?? "loading"}</p>
+              </div>
             </div>
-            <Button variant="secondary" size="sm" onClick={signOut}>
-              Sign out
-            </Button>
+            <div className="flex items-center gap-1">
+              <Button variant="outline" size="sm" onClick={() => setProfileSettingsOpen(true)}>
+                Profile
+              </Button>
+              <Button variant="secondary" size="sm" onClick={signOut}>
+                Sign out
+              </Button>
+            </div>
           </div>
         </aside>
 
@@ -1057,16 +1303,67 @@ const ChatApp = () => {
 
                 {chronologicalMessages.map(message => (
                   <article key={message.id} className="flex gap-3">
-                    <div className="h-9 w-9 rounded-full bg-muted grid place-items-center text-xs font-semibold uppercase">
-                      {message.author.display_name.slice(0, 1)}
-                    </div>
+                    <button
+                      type="button"
+                      onClick={() => openProfile(message.author)}
+                      className="h-9 w-9 shrink-0 overflow-hidden rounded-full bg-muted grid place-items-center text-xs font-semibold uppercase"
+                      aria-label={`Open profile for ${message.author.display_name}`}
+                    >
+                      {message.author.avatar_url ? (
+                        <img
+                          src={message.author.avatar_url}
+                          alt={`${message.author.display_name} avatar`}
+                          className="h-full w-full object-cover"
+                        />
+                      ) : (
+                        getDisplayInitial(message.author.display_name)
+                      )}
+                    </button>
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
                         <span className="font-semibold text-sm">{message.author.display_name}</span>
                         <span className="text-xs">{formatTime(message.timestamp)}</span>
                         {message.edited_timestamp ? <span className="text-[10px]">(edited)</span> : null}
                       </div>
-                      <p className="whitespace-pre-wrap break-words text-sm mt-1">{message.content}</p>
+                      {message.content ? (
+                        <p className="whitespace-pre-wrap break-words text-sm mt-1">{message.content}</p>
+                      ) : null}
+                      {message.attachments.length > 0 ? (
+                        <div className="mt-2 space-y-2">
+                          {message.attachments.map(attachment => (
+                            isImageAttachment(attachment.content_type) ? (
+                              <a
+                                key={attachment.id}
+                                href={attachment.url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="block max-w-sm overflow-hidden rounded-md border bg-card"
+                              >
+                                <img
+                                  src={attachment.url}
+                                  alt={attachment.filename}
+                                  className="max-h-80 w-full object-cover"
+                                  loading="lazy"
+                                />
+                              </a>
+                            ) : (
+                              <a
+                                key={attachment.id}
+                                href={attachment.url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="block rounded-md border px-3 py-2 text-sm hover:bg-accent"
+                              >
+                                <p className="font-medium truncate">{attachment.filename}</p>
+                                <p className="text-xs mt-1">
+                                  {formatBytes(attachment.size)}
+                                  {attachment.content_type ? ` · ${attachment.content_type}` : ""}
+                                </p>
+                              </a>
+                            )
+                          ))}
+                        </div>
+                      ) : null}
                     </div>
                   </article>
                 ))}
@@ -1084,7 +1381,7 @@ const ChatApp = () => {
                     setComposerValue(event.target.value);
                     triggerTyping();
                   }}
-                  disabled={!canSendInActiveChannel}
+                  disabled={!canSendInActiveChannel || isSendingMessage}
                   onKeyDown={event => {
                     if (event.key === "Enter" && !event.shiftKey) {
                       event.preventDefault();
@@ -1098,15 +1395,58 @@ const ChatApp = () => {
                   }
                   className="min-h-20"
                 />
+                <input
+                  ref={attachmentInputRef}
+                  type="file"
+                  multiple
+                  className="hidden"
+                  onChange={handleAttachmentInputChange}
+                />
                 {!canSendInActiveChannel && route.mode === "guild" ? (
                   <p className="mt-2 text-xs">You do not have permission to send messages in this server.</p>
                 ) : null}
-                <div className="mt-2 flex justify-end">
+                {composerAttachments.length > 0 ? (
+                  <div className="mt-3 space-y-2">
+                    {composerAttachments.map(attachment => (
+                      <div
+                        key={attachment.local_id}
+                        className="flex items-center justify-between gap-3 rounded-md border px-3 py-2"
+                      >
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-medium">{attachment.filename}</p>
+                          <p className="text-xs">
+                            {formatBytes(attachment.size)} · {attachment.status}
+                            {attachment.error ? ` · ${attachment.error}` : ""}
+                          </p>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => removeComposerAttachment(attachment.local_id)}
+                          disabled={isSendingMessage || attachment.status === "uploading"}
+                        >
+                          Remove
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+                <div className="mt-2 flex items-center justify-between gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => attachmentInputRef.current?.click()}
+                    disabled={isSendingMessage || !canSendInActiveChannel}
+                  >
+                    <Paperclip className="mr-2 h-4 w-4" />
+                    Attach
+                  </Button>
                   <Button
                     onClick={() => sendMessage().catch(() => undefined)}
-                    disabled={sendMessageMutation.isPending || !canSendInActiveChannel}
+                    disabled={isSendingMessage || sendMessageMutation.isPending || !canSendInActiveChannel}
                   >
-                    Send
+                    {isSendingMessage || sendMessageMutation.isPending ? "Sending..." : "Send"}
                   </Button>
                 </div>
               </footer>
@@ -1121,6 +1461,110 @@ const ChatApp = () => {
           )}
         </main>
       </div>
+
+      <Modal
+        open={Boolean(profileDialog)}
+        onClose={() => setProfileDialog(null)}
+        title={profileDialog?.user.display_name ?? "User Profile"}
+        description={profileDialog ? `@${profileDialog.user.username}` : undefined}
+      >
+        {profileDialog ? (
+          <div className="space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="h-14 w-14 shrink-0 overflow-hidden rounded-full bg-muted grid place-items-center text-sm font-semibold uppercase">
+                {profileDialog.user.avatar_url ? (
+                  <img
+                    src={profileDialog.user.avatar_url}
+                    alt={`${profileDialog.user.display_name} avatar`}
+                    className="h-full w-full object-cover"
+                  />
+                ) : (
+                  getDisplayInitial(profileDialog.user.display_name)
+                )}
+              </div>
+              <div className="min-w-0">
+                <p className="font-semibold truncate">{profileDialog.user.display_name}</p>
+                <p className="text-sm truncate">@{profileDialog.user.username}</p>
+                <p className="text-xs mt-1 break-all">ID: {profileDialog.user.id}</p>
+              </div>
+            </div>
+
+            {profileDialog.guildId ? (
+              <div className="space-y-2">
+                <p className="text-sm font-semibold">Roles in this server</p>
+                {profileMemberQuery.isPending || profileRolesQuery.isPending ? (
+                  <p className="text-sm">Loading roles...</p>
+                ) : null}
+                {profileMemberQuery.isError || profileRolesQuery.isError ? (
+                  <p className="text-sm">Could not load roles for this user.</p>
+                ) : null}
+                {!profileMemberQuery.isPending && !profileRolesQuery.isPending && !profileMemberQuery.isError && !profileRolesQuery.isError ? (
+                  profileRoles.length > 0 ? (
+                    <div className="flex flex-wrap gap-2">
+                      {profileRoles.map(role => (
+                        <span key={role.id} className="rounded bg-accent px-2 py-1 text-xs">
+                          {role.name}
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-sm">No roles found.</p>
+                  )
+                ) : null}
+                {profileMemberQuery.data?.joined_at ? (
+                  <p className="text-xs">Joined: {new Date(profileMemberQuery.data.joined_at).toLocaleDateString()}</p>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </Modal>
+
+      <Modal
+        open={profileSettingsOpen}
+        onClose={() => setProfileSettingsOpen(false)}
+        title="Profile Settings"
+        description="Update your avatar."
+      >
+        <div className="space-y-4">
+          <input
+            ref={avatarInputRef}
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            className="hidden"
+            onChange={event => {
+              void handleAvatarFileChange(event);
+            }}
+          />
+          <div className="flex items-center gap-3">
+            <div className="h-14 w-14 shrink-0 overflow-hidden rounded-full bg-muted grid place-items-center text-sm font-semibold uppercase">
+              {me?.avatar_url ? (
+                <img
+                  src={me.avatar_url}
+                  alt={`${me.display_name} avatar`}
+                  className="h-full w-full object-cover"
+                />
+              ) : (
+                getDisplayInitial(me?.display_name ?? sessionUser?.name ?? "You")
+              )}
+            </div>
+            <div className="min-w-0">
+              <p className="font-semibold truncate">{me?.display_name ?? sessionUser?.name ?? "You"}</p>
+              <p className="text-sm truncate">@{me?.username ?? "loading"}</p>
+              <p className="text-xs mt-1">PNG, JPEG, or WEBP. Max size enforced by server.</p>
+            </div>
+          </div>
+          <div className="flex justify-end">
+            <Button
+              type="button"
+              onClick={() => avatarInputRef.current?.click()}
+              disabled={isAvatarUploading}
+            >
+              {isAvatarUploading ? "Uploading..." : "Change Avatar"}
+            </Button>
+          </div>
+        </div>
+      </Modal>
 
       <Modal
         open={createGuildOpen}

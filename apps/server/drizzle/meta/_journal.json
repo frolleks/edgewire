@@ -22,6 +22,13 @@
       "when": 1771295300000,
       "tag": "0002_roles_permissions",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1771310700000,
+      "tag": "0003_uploads",
+      "breakpoints": true
     }
   ]
 }

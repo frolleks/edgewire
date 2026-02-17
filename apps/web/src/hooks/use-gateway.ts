@@ -7,6 +7,7 @@ import type {
   GuildRole,
   MessagePayload,
   ReadyEvent,
+  UserSummary,
 } from "@discord/types";
 import { useQueryClient } from "@tanstack/react-query";
 import type { InfiniteData } from "@tanstack/react-query";
@@ -74,6 +75,14 @@ const ensureDmChannel = (input: DmChannelPayload): DmChannel => ({
   ...input,
   unread: Boolean(input.unread),
 });
+
+const withUpdatedAuthor = (message: MessagePayload, user: UserSummary): MessagePayload =>
+  message.author.id === user.id
+    ? {
+        ...message,
+        author: user,
+      }
+    : message;
 
 export const useGateway = ({ enabled, userId, activeChannelId }: GatewayParams): void => {
   const queryClient = useQueryClient();
@@ -427,6 +436,50 @@ export const useGateway = ({ enabled, userId, activeChannelId }: GatewayParams):
               return next;
             });
             queryClient.setQueryData<Guild>(queryKeys.guildSettings(guild.id), guild);
+            break;
+          }
+          case "USER_UPDATE": {
+            const user = packet.d as UserSummary;
+
+            queryClient.setQueryData<UserSummary>(queryKeys.me, old =>
+              old && old.id === user.id ? { ...old, ...user } : old,
+            );
+
+            queryClient.setQueryData<DmChannel[]>(queryKeys.dmChannels, old =>
+              (old ?? []).map(channel => ({
+                ...channel,
+                recipients: channel.recipients.map(recipient =>
+                  recipient.id === user.id ? { ...recipient, ...user } : recipient,
+                ),
+                last_message: channel.last_message ? withUpdatedAuthor(channel.last_message, user) : channel.last_message,
+              })),
+            );
+
+            queryClient.setQueriesData<InfiniteData<MessagePayload[]>>(
+              { queryKey: ["messages"] },
+              old =>
+                old
+                  ? {
+                      ...old,
+                      pages: old.pages.map(page => page.map(message => withUpdatedAuthor(message, user))),
+                    }
+                  : old,
+            );
+
+            queryClient.setQueriesData<GuildMemberListItem[]>(
+              { queryKey: ["guild-members"] },
+              old =>
+                old
+                  ? old.map(member =>
+                      member.user.id === user.id
+                        ? {
+                            ...member,
+                            user,
+                          }
+                        : member,
+                    )
+                  : old,
+            );
             break;
           }
           default:

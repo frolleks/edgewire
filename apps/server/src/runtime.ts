@@ -1,4 +1,5 @@
 import type {
+  APIAttachment,
   ChannelPermissionOverwrite,
   DmChannelPayload,
   GatewayPacket,
@@ -25,13 +26,15 @@ import {
   guildRoles,
   guilds,
   invites,
+  messageAttachments,
   messageReads,
   messages,
   users,
 } from "./db/schema";
 import { env } from "./env";
 import { nextSnowflake } from "./lib/snowflake";
-import { ensureAppUser, getUserSummaryById, type AuthUserLike, type UserSummary } from "./lib/users";
+import { ensureAppUser, getUserSummaryById, toUserSummary, type AuthUserLike, type UserSummary } from "./lib/users";
+import { presignGet, toPublicObjectUrl } from "./storage/s3";
 
 export const HEARTBEAT_INTERVAL_MS = 25_000;
 export const MESSAGE_MAX_LENGTH = 2_000;
@@ -61,6 +64,22 @@ export const patchChannelSchema = z.object({
 });
 
 export const createMessageSchema = z.object({
+  content: z.string().max(MESSAGE_MAX_LENGTH).optional(),
+  attachment_upload_ids: z.array(z.string().trim().min(1).max(64)).max(10).optional(),
+})
+  .superRefine((value, ctx) => {
+    const hasContent = Boolean(value.content?.trim());
+    const hasAttachments = (value.attachment_upload_ids?.length ?? 0) > 0;
+
+    if (!hasContent && !hasAttachments) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Message must include content or attachments.",
+      });
+    }
+  });
+
+export const editMessageSchema = z.object({
   content: z.string().trim().min(1).max(MESSAGE_MAX_LENGTH),
 });
 
@@ -101,6 +120,7 @@ export type GatewayConnection = {
 
 export type ChannelRow = typeof channels.$inferSelect;
 type MessageRow = typeof messages.$inferSelect;
+type MessageAttachmentRow = typeof messageAttachments.$inferSelect;
 type GuildRow = typeof guilds.$inferSelect;
 type InviteRow = typeof invites.$inferSelect;
 type GuildRoleRow = typeof guildRoles.$inferSelect;
@@ -255,6 +275,47 @@ export const getDmMemberIds = async (channelId: string): Promise<string[]> => {
   return rows.map(row => row.userId);
 };
 
+export const getUserAudienceIds = async (userId: string): Promise<string[]> => {
+  const audience = new Set<string>([userId]);
+
+  const guildRows = await db
+    .select({ guildId: guildMembers.guildId })
+    .from(guildMembers)
+    .where(eq(guildMembers.userId, userId));
+
+  const guildIds = [...new Set(guildRows.map(row => row.guildId))];
+  if (guildIds.length > 0) {
+    const guildMembersRows = await db
+      .select({ memberId: guildMembers.userId })
+      .from(guildMembers)
+      .where(inArray(guildMembers.guildId, guildIds));
+
+    for (const member of guildMembersRows) {
+      audience.add(member.memberId);
+    }
+  }
+
+  const dmMemberships = await db
+    .select({ channelId: channelMembers.channelId })
+    .from(channelMembers)
+    .innerJoin(channels, eq(channelMembers.channelId, channels.id))
+    .where(and(eq(channelMembers.userId, userId), eq(channels.type, ChannelType.DM)));
+
+  const dmChannelIds = [...new Set(dmMemberships.map(row => row.channelId))];
+  if (dmChannelIds.length > 0) {
+    const dmMembersRows = await db
+      .select({ memberId: channelMembers.userId })
+      .from(channelMembers)
+      .where(inArray(channelMembers.channelId, dmChannelIds));
+
+    for (const member of dmMembersRows) {
+      audience.add(member.memberId);
+    }
+  }
+
+  return [...audience];
+};
+
 export const emitToGuild = async (guildId: string, event: string, data: unknown): Promise<void> => {
   const members = await getGuildMemberIds(guildId);
   emitToUsers(members, event, data);
@@ -276,12 +337,95 @@ export const emitToChannelAudience = async (channel: ChannelRow, event: string, 
   }
 };
 
-export const makeMessagePayload = (message: MessageRow, author: SharedUserSummary, guildId: string | null): MessagePayload => ({
+const normalizeContentType = (value: string | null | undefined): string | null => {
+  if (!value) {
+    return null;
+  }
+
+  const normalized = value.split(";")[0]?.trim().toLowerCase();
+  return normalized || null;
+};
+
+const supportsInlinePreview = (contentType: string | null): boolean => {
+  if (!contentType) {
+    return false;
+  }
+
+  return (
+    contentType.startsWith("image/") ||
+    contentType.startsWith("video/") ||
+    contentType.startsWith("audio/") ||
+    contentType === "application/pdf" ||
+    contentType.startsWith("text/")
+  );
+};
+
+const sanitizeDispositionFilename = (filename: string): string => filename.replace(/[\r\n\"\\\\]+/g, "_");
+
+const resolveAttachmentDownloadUrl = (attachment: MessageAttachmentRow): string => {
+  if (attachment.urlKind === "public") {
+    const publicUrl = toPublicObjectUrl(attachment.s3Key);
+    if (publicUrl) {
+      return publicUrl;
+    }
+  }
+
+  const contentType = normalizeContentType(attachment.contentType);
+  const dispositionType = supportsInlinePreview(contentType) ? "inline" : "attachment";
+  const disposition = `${dispositionType}; filename=\"${sanitizeDispositionFilename(attachment.filename)}\"`;
+
+  return presignGet(attachment.s3Key, {
+    expiresIn: env.DOWNLOAD_PRESIGN_EXPIRES_SECONDS,
+    contentType: contentType ?? undefined,
+    contentDisposition: disposition,
+  });
+};
+
+export const toAttachmentPayload = (attachment: MessageAttachmentRow): APIAttachment => {
+  const url = resolveAttachmentDownloadUrl(attachment);
+  return {
+    id: attachment.id,
+    filename: attachment.filename,
+    size: attachment.size,
+    url,
+    proxy_url: url,
+    content_type: attachment.contentType ?? null,
+  };
+};
+
+export const listMessageAttachmentPayloads = async (messageIds: string[]): Promise<Map<string, APIAttachment[]>> => {
+  if (messageIds.length === 0) {
+    return new Map();
+  }
+
+  const rows = await db
+    .select()
+    .from(messageAttachments)
+    .where(inArray(messageAttachments.messageId, messageIds))
+    .orderBy(asc(messageAttachments.createdAt), asc(sql`${messageAttachments.id}::bigint`));
+
+  const grouped = new Map<string, APIAttachment[]>();
+  for (const row of rows) {
+    const current = grouped.get(row.messageId) ?? [];
+    current.push(toAttachmentPayload(row));
+    grouped.set(row.messageId, current);
+  }
+
+  return grouped;
+};
+
+export const makeMessagePayload = (
+  message: MessageRow,
+  author: SharedUserSummary,
+  guildId: string | null,
+  attachments: APIAttachment[] = [],
+): MessagePayload => ({
   id: message.id,
   channel_id: message.channelId,
   guild_id: guildId,
   author,
   content: message.content,
+  attachments,
   timestamp: toIso(message.createdAt) ?? new Date().toISOString(),
   edited_timestamp: toIso(message.editedAt),
   type: 0,
@@ -387,6 +531,7 @@ export const toDmChannelPayload = async (channel: ChannelRow, viewerId: string):
   let lastMessagePayload: MessagePayload | null = null;
   if (lastMessage) {
     const author = await getUserSummaryById(lastMessage.authorId);
+    const attachmentsByMessage = await listMessageAttachmentPayloads([lastMessage.id]);
     lastMessagePayload = makeMessagePayload(
       lastMessage,
       {
@@ -396,6 +541,7 @@ export const toDmChannelPayload = async (channel: ChannelRow, viewerId: string):
         avatar_url: author?.avatar_url ?? null,
       },
       null,
+      attachmentsByMessage.get(lastMessage.id) ?? [],
     );
   }
 
@@ -643,13 +789,15 @@ export const listChannelMessages = async (
     .select({
       id: users.id,
       username: users.username,
-      display_name: users.displayName,
-      avatar_url: users.avatarUrl,
+      displayName: users.displayName,
+      avatarUrl: users.avatarUrl,
+      avatarS3Key: users.avatarS3Key,
     })
     .from(users)
     .where(inArray(users.id, authorIds));
 
-  const authors = new Map(authorRows.map(row => [row.id, row]));
+  const authors = new Map(authorRows.map(row => [row.id, toUserSummary(row)]));
+  const attachmentsByMessage = await listMessageAttachmentPayloads(rows.map(row => row.id));
 
   const channel = await db.query.channels.findFirst({
     where: eq(channels.id, channelId),
@@ -668,6 +816,7 @@ export const listChannelMessages = async (
         avatar_url: author?.avatar_url ?? null,
       },
       guildId,
+      attachmentsByMessage.get(row.id) ?? [],
     );
   });
 };

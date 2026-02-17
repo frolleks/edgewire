@@ -2,6 +2,7 @@ import { and, ilike, ne, or } from "drizzle-orm";
 import { db } from "../db";
 import { users } from "../db/schema";
 import { json, requireAuth } from "../http";
+import { toUserSummary } from "../lib/users";
 
 export const searchUsers = async (request: Request): Promise<Response> => {
   const authResult = await requireAuth(request);
@@ -20,13 +21,14 @@ export const searchUsers = async (request: Request): Promise<Response> => {
     .select({
       id: users.id,
       username: users.username,
-      display_name: users.displayName,
-      avatar_url: users.avatarUrl,
+      displayName: users.displayName,
+      avatarUrl: users.avatarUrl,
+      avatarS3Key: users.avatarS3Key,
     })
     .from(users)
     .where(where)
     .orderBy(users.username)
     .limit(20);
 
-  return json(request, rows);
+  return json(request, rows.map(toUserSummary));
 };

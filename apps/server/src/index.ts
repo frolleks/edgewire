@@ -1,5 +1,6 @@
 import type { GatewayPacket } from "@discord/types";
 import { apiNotFoundAfterAuth, internalServerError } from "./controllers/common";
+import { startUploadCleanupTask } from "./controllers/uploads";
 import { env } from "./env";
 import { corsPreflight } from "./http";
 import { getUserSummaryById } from "./lib/users";
@@ -18,6 +19,8 @@ import {
   type GatewayConnection,
   type WsData,
 } from "./runtime";
+
+startUploadCleanupTask();
 
 const server = Bun.serve<WsData>({
   port: env.PORT,

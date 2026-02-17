@@ -26,9 +26,19 @@ export interface MessagePayload {
   guild_id: string | null;
   author: UserSummary;
   content: string;
+  attachments: APIAttachment[];
   timestamp: string;
   edited_timestamp: string | null;
   type: 0;
+}
+
+export interface APIAttachment {
+  id: string;
+  filename: string;
+  size: number;
+  url: string;
+  proxy_url: string;
+  content_type?: string | null;
 }
 
 export interface DmChannelPayload {

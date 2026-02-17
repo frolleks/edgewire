@@ -1,20 +1,22 @@
 import { ChannelType } from "@discord/types";
 import type { BunRequest } from "bun";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import { db } from "../db";
-import { messages } from "../db/schema";
+import { messageAttachments, messages, uploadSessions } from "../db/schema";
 import { badRequest, empty, forbidden, json, notFound, parseJson, requireAuth } from "../http";
 import { PermissionBits } from "../lib/permissions";
 import { hasChannelPermission } from "../lib/permission-service";
 import {
-  MESSAGE_MAX_LENGTH,
   canAccessChannel,
   createMessageSchema,
+  editMessageSchema,
   emitToChannelAudience,
   listChannelMessages,
+  listMessageAttachmentPayloads,
   makeMessagePayload,
   nextId,
   parseSnowflake,
+  toAttachmentPayload,
   toSummary,
 } from "../runtime";
 
@@ -96,24 +98,127 @@ export const createChannelMessage = async (request: BunRequest<"/api/channels/:c
   const body = await parseJson<unknown>(request);
   const parsed = createMessageSchema.safeParse(body);
   if (!parsed.success) {
-    return badRequest(request, `content must be between 1 and ${MESSAGE_MAX_LENGTH} characters.`);
+    return badRequest(request, "Invalid message payload.");
   }
 
-  const [created] = await db
-    .insert(messages)
-    .values({
-      id: nextId(),
-      channelId,
-      authorId: me.id,
-      content: parsed.data.content,
-    })
-    .returning();
+  const content = parsed.data.content?.trim() ?? "";
+  const attachmentUploadIds = [...new Set(parsed.data.attachment_upload_ids ?? [])];
+  const now = new Date();
 
-  if (!created) {
+  const uploadRows =
+    attachmentUploadIds.length === 0
+      ? []
+      : await db
+          .select()
+          .from(uploadSessions)
+          .where(and(eq(uploadSessions.userId, me.id), inArray(uploadSessions.id, attachmentUploadIds)));
+
+  if (uploadRows.length !== attachmentUploadIds.length) {
+    return badRequest(request, "One or more attachment uploads were not found.");
+  }
+
+  const uploadsById = new Map(uploadRows.map(row => [row.id, row]));
+  const orderedUploads = attachmentUploadIds
+    .map(uploadId => uploadsById.get(uploadId))
+    .filter((upload): upload is typeof uploadSessions.$inferSelect => Boolean(upload));
+  if (orderedUploads.length !== attachmentUploadIds.length) {
+    return badRequest(request, "One or more attachment uploads were not found.");
+  }
+
+  for (const upload of orderedUploads) {
+    if (
+      upload.kind !== "attachment" ||
+      upload.status !== "completed" ||
+      upload.channelId !== channelId ||
+      upload.messageId !== null
+    ) {
+      return badRequest(request, "One or more attachment uploads are not valid for this message.");
+    }
+
+    if (upload.expiresAt.getTime() <= now.getTime()) {
+      return badRequest(request, "One or more attachment uploads have expired.");
+    }
+
+    if (!upload.expectedSize || upload.expectedSize <= 0) {
+      return badRequest(request, "One or more attachment uploads are missing file metadata.");
+    }
+  }
+
+  let createdMessage: typeof messages.$inferSelect | null = null;
+  let createdAttachments: Array<typeof messageAttachments.$inferSelect> = [];
+
+  try {
+    await db.transaction(async tx => {
+      const [created] = await tx
+        .insert(messages)
+        .values({
+          id: nextId(),
+          channelId,
+          authorId: me.id,
+          content,
+        })
+        .returning();
+
+      if (!created) {
+        throw new Error("Failed to create message.");
+      }
+
+      createdMessage = created;
+
+      if (orderedUploads.length === 0) {
+        return;
+      }
+
+      createdAttachments = await tx
+        .insert(messageAttachments)
+        .values(
+          orderedUploads.map(upload => ({
+            id: nextId(),
+            messageId: created.id,
+            channelId,
+            uploaderId: me.id,
+            s3Key: upload.s3Key,
+            filename: upload.filename,
+            size: upload.expectedSize ?? 0,
+            contentType: upload.contentType,
+            urlKind: "presigned",
+          })),
+        )
+        .returning();
+
+      const boundRows = await tx
+        .update(uploadSessions)
+        .set({ messageId: created.id })
+        .where(
+          and(
+            eq(uploadSessions.userId, me.id),
+            eq(uploadSessions.kind, "attachment"),
+            eq(uploadSessions.status, "completed"),
+            eq(uploadSessions.channelId, channelId),
+            isNull(uploadSessions.messageId),
+            inArray(uploadSessions.id, orderedUploads.map(upload => upload.id)),
+          ),
+        )
+        .returning({ id: uploadSessions.id });
+
+      if (boundRows.length !== orderedUploads.length) {
+        throw new Error("One or more attachment uploads were already consumed.");
+      }
+    });
+  } catch (error) {
+    return badRequest(request, error instanceof Error ? error.message : "Failed to create message.");
+  }
+
+  if (!createdMessage) {
     return badRequest(request, "Failed to create message.");
   }
 
-  const payload = makeMessagePayload(created, toSummary(me), access.channel.guildId ?? null);
+  const payload = makeMessagePayload(
+    createdMessage,
+    toSummary(me),
+    access.channel.guildId ?? null,
+    createdAttachments.map(toAttachmentPayload),
+  );
   await emitToChannelAudience(access.channel, "MESSAGE_CREATE", payload);
 
   return json(request, payload, { status: 201 });
@@ -162,9 +267,9 @@ export const updateChannelMessage = async (
   }
 
   const body = await parseJson<unknown>(request);
-  const parsed = createMessageSchema.safeParse(body);
+  const parsed = editMessageSchema.safeParse(body);
   if (!parsed.success) {
-    return badRequest(request, `content must be between 1 and ${MESSAGE_MAX_LENGTH} characters.`);
+    return badRequest(request, "content must be between 1 and 2000 characters.");
   }
 
   const [updated] = await db
@@ -180,7 +285,13 @@ export const updateChannelMessage = async (
     return notFound(request);
   }
 
-  const payload = makeMessagePayload(updated, toSummary(me), access.channel.guildId ?? null);
+  const attachmentsByMessage = await listMessageAttachmentPayloads([updated.id]);
+  const payload = makeMessagePayload(
+    updated,
+    toSummary(me),
+    access.channel.guildId ?? null,
+    attachmentsByMessage.get(updated.id) ?? [],
+  );
   await emitToChannelAudience(access.channel, "MESSAGE_UPDATE", payload);
   return json(request, payload);
 };

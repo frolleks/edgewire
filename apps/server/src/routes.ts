@@ -8,6 +8,7 @@ import {
   createGuildChannel,
   getGuild,
   getGuildChannels,
+  getGuildMember,
   getMyGuildPermissions,
   listGuildMembers,
   updateGuildSettings,
@@ -31,6 +32,7 @@ import {
   reorderRoles,
   updateRole,
 } from "./controllers/roles";
+import { abortUpload, completeUpload, initiateAttachmentUpload, initiateAvatarUpload } from "./controllers/uploads";
 import { searchUsers } from "./controllers/users";
 import { corsPreflight, methodNotAllowed } from "./http";
 
@@ -139,6 +141,14 @@ export const routes = {
     DELETE: auth404,
     OPTIONS: corsPreflight,
   },
+  "/api/guilds/:guildId/members/:userId": {
+    GET: safe(getGuildMember as Handler),
+    POST: auth404,
+    PUT: auth404,
+    PATCH: auth404,
+    DELETE: auth404,
+    OPTIONS: corsPreflight,
+  },
   "/api/guilds/:guildId/permissions/@me": {
     GET: safe(getMyGuildPermissions as Handler),
     POST: auth404,
@@ -207,6 +217,38 @@ export const routes = {
     PUT: safe(updateReadState as Handler),
     GET: auth404,
     POST: auth404,
+    PATCH: auth404,
+    DELETE: auth404,
+    OPTIONS: corsPreflight,
+  },
+  "/api/uploads/avatar": {
+    POST: safe(initiateAvatarUpload),
+    GET: auth404,
+    PUT: auth404,
+    PATCH: auth404,
+    DELETE: auth404,
+    OPTIONS: corsPreflight,
+  },
+  "/api/uploads/attachment": {
+    POST: safe(initiateAttachmentUpload),
+    GET: auth404,
+    PUT: auth404,
+    PATCH: auth404,
+    DELETE: auth404,
+    OPTIONS: corsPreflight,
+  },
+  "/api/uploads/:uploadId/complete": {
+    POST: safe(completeUpload as Handler),
+    GET: auth404,
+    PUT: auth404,
+    PATCH: auth404,
+    DELETE: auth404,
+    OPTIONS: corsPreflight,
+  },
+  "/api/uploads/:uploadId/abort": {
+    POST: safe(abortUpload as Handler),
+    GET: auth404,
+    PUT: auth404,
     PATCH: auth404,
     DELETE: auth404,
     OPTIONS: corsPreflight,

@@ -20,6 +20,7 @@ export const users = pgTable(
     username: text("username").notNull(),
     displayName: text("display_name").notNull(),
     avatarUrl: text("avatar_url"),
+    avatarS3Key: text("avatar_s3_key"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   table => [uniqueIndex("users_username_unique").on(table.username)],
@@ -175,6 +176,66 @@ export const messages = pgTable(
   ],
 );
 
+export const uploadSessionKindEnum = pgEnum("upload_session_kind", ["avatar", "attachment"]);
+export const uploadSessionStatusEnum = pgEnum("upload_session_status", ["pending", "completed", "aborted", "expired"]);
+export const attachmentUrlKindEnum = pgEnum("attachment_url_kind", ["presigned", "public"]);
+
+export const uploadSessions = pgTable(
+  "upload_sessions",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    kind: uploadSessionKindEnum("kind").notNull(),
+    status: uploadSessionStatusEnum("status").notNull().default("pending"),
+    s3Key: text("s3_key").notNull(),
+    filename: text("filename").notNull(),
+    contentType: text("content_type"),
+    expectedSize: integer("expected_size"),
+    channelId: text("channel_id").references(() => channels.id, { onDelete: "set null" }),
+    messageId: text("message_id").references(() => messages.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+  },
+  table => [
+    uniqueIndex("upload_sessions_s3_key_unique").on(table.s3Key),
+    index("upload_sessions_user_id_idx").on(table.userId),
+    index("upload_sessions_status_expires_idx").on(table.status, table.expiresAt),
+    index("upload_sessions_channel_id_idx").on(table.channelId),
+    index("upload_sessions_message_id_idx").on(table.messageId),
+  ],
+);
+
+export const messageAttachments = pgTable(
+  "message_attachments",
+  {
+    id: text("id").primaryKey(),
+    messageId: text("message_id")
+      .notNull()
+      .references(() => messages.id, { onDelete: "cascade" }),
+    channelId: text("channel_id")
+      .notNull()
+      .references(() => channels.id, { onDelete: "cascade" }),
+    uploaderId: text("uploader_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    s3Key: text("s3_key").notNull(),
+    filename: text("filename").notNull(),
+    size: integer("size").notNull(),
+    contentType: text("content_type"),
+    urlKind: attachmentUrlKindEnum("url_kind").notNull().default("presigned"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  table => [
+    uniqueIndex("message_attachments_s3_key_unique").on(table.s3Key),
+    index("message_attachments_message_id_idx").on(table.messageId),
+    index("message_attachments_channel_id_idx").on(table.channelId),
+    index("message_attachments_uploader_id_idx").on(table.uploaderId),
+  ],
+);
+
 export const messageReads = pgTable(
   "message_reads",
   {
@@ -243,6 +304,8 @@ export const schema = {
   channels,
   channelMembers,
   messages,
+  uploadSessions,
+  messageAttachments,
   messageReads,
   channelPermissionOverwrites,
   invites,

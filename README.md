@@ -42,6 +42,8 @@ cp apps/server/.env.example apps/server/.env
 cp apps/web/.env.example apps/web/.env
 ```
 
+For S3 uploads, configure the `S3_*`/`AWS_*` credentials plus upload limits in `apps/server/.env`.
+
 ## 4) Start PostgreSQL
 
 ```bash
@@ -158,9 +160,15 @@ All routes require authentication except Better Auth endpoints.
 
 ### Messages
 - `GET /api/channels/:channelId/messages?limit=50&before=:messageId`
-- `POST /api/channels/:channelId/messages`
+- `POST /api/channels/:channelId/messages` (`content` and optional `attachment_upload_ids`)
 - `PATCH /api/channels/:channelId/messages/:messageId`
 - `DELETE /api/channels/:channelId/messages/:messageId`
+
+### Uploads (S3 direct upload)
+- `POST /api/uploads/avatar`
+- `POST /api/uploads/attachment`
+- `POST /api/uploads/:uploadId/complete`
+- `POST /api/uploads/:uploadId/abort`
 
 ### Typing + Read
 - `POST /api/channels/:channelId/typing`

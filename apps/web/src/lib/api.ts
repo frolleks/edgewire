@@ -29,6 +29,32 @@ export type TypingEvent = {
   timestamp: number;
 };
 
+export type UploadInitResponse = {
+  upload_id: string;
+  key: string;
+  method: "PUT";
+  put_url: string;
+  headers: {
+    "Content-Type": string;
+  };
+  expires_at: string;
+};
+
+export type CompleteUploadResponse =
+  | {
+      upload_id: string;
+      kind: "avatar";
+      user: UserSummary;
+      avatar_s3_key?: string | null;
+    }
+  | {
+      upload_id: string;
+      kind: "attachment";
+      filename: string;
+      size: number;
+      content_type: string | null;
+    };
+
 export const api = {
   getMe: () => apiFetch<CurrentUser>("/api/users/@me"),
   updateProfile: (body: { username?: string; display_name?: string; avatar_url?: string | null }) =>
@@ -162,6 +188,8 @@ export const api = {
     const suffix = query.toString();
     return apiFetch<GuildMember[]>(`/api/guilds/${guildId}/members${suffix ? `?${suffix}` : ""}`);
   },
+  getGuildMember: (guildId: string, userId: string) =>
+    apiFetch<GuildMember>(`/api/guilds/${guildId}/members/${userId}`),
   addGuildMemberRole: (guildId: string, userId: string, roleId: string) =>
     apiFetch<{ guild_id: string; user_id: string; role_id: string }>(
       `/api/guilds/${guildId}/members/${userId}/roles/${roleId}`,
@@ -181,10 +209,16 @@ export const api = {
     }
     return apiFetch<MessagePayload[]>(`/api/channels/${channelId}/messages?${params.toString()}`);
   },
-  createMessage: (channelId: string, content: string) =>
+  createMessage: (
+    channelId: string,
+    payload: {
+      content?: string;
+      attachment_upload_ids?: string[];
+    },
+  ) =>
     apiFetch<MessagePayload>(`/api/channels/${channelId}/messages`, {
       method: "POST",
-      body: JSON.stringify({ content }),
+      body: JSON.stringify(payload),
     }),
   editMessage: (channelId: string, messageId: string, content: string) =>
     apiFetch<MessagePayload>(`/api/channels/${channelId}/messages/${messageId}`, {
@@ -219,6 +253,27 @@ export const api = {
   acceptInvite: (code: string) =>
     apiFetch<{ guildId: string; channelId: string }>(`/api/invites/${code}/accept`, {
       method: "POST",
+    }),
+
+  initAvatarUpload: (payload: { filename: string; content_type: string; size: number }) =>
+    apiFetch<UploadInitResponse>("/api/uploads/avatar", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  initAttachmentUpload: (payload: { channel_id: string; filename: string; content_type: string; size: number }) =>
+    apiFetch<UploadInitResponse>("/api/uploads/attachment", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  completeUpload: (uploadId: string) =>
+    apiFetch<CompleteUploadResponse>(`/api/uploads/${uploadId}/complete`, {
+      method: "POST",
+      body: "{}",
+    }),
+  abortUpload: (uploadId: string) =>
+    apiFetch<void>(`/api/uploads/${uploadId}/abort`, {
+      method: "POST",
+      body: "{}",
     }),
 
   mintGatewayToken: () =>

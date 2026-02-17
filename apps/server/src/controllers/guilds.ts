@@ -14,6 +14,7 @@ import {
 import { badRequest, forbidden, json, notFound, parseJson, requireAuth } from "../http";
 import { PermissionBits, defaultEveryonePermissions } from "../lib/permissions";
 import { getGuildPermissionContext, hasGuildPermission, listVisibleGuildChannelsForUser } from "../lib/permission-service";
+import { resolveAvatarUrl } from "../storage/s3";
 import {
   buildGuildCreateEvent,
   createGuildChannelSchema,
@@ -386,6 +387,83 @@ export const updateGuildSettings = async (request: BunRequest<"/api/guilds/:guil
   return json(request, payload);
 };
 
+const toGuildMemberPayload = (
+  guildId: string,
+  member: {
+    guildId: string;
+    userId: string;
+    joinedAt: Date;
+    role: "OWNER" | "MEMBER";
+    username: string;
+    displayName: string;
+    avatarUrl: string | null;
+    avatarS3Key: string | null;
+  },
+  roleIds: string[],
+) => ({
+  guild_id: member.guildId,
+  user: {
+    id: member.userId,
+    username: member.username,
+    display_name: member.displayName,
+    avatar_url: resolveAvatarUrl(member.avatarS3Key, member.avatarUrl),
+  },
+  joined_at: member.joinedAt.toISOString(),
+  roles: [guildId, ...roleIds],
+  role: member.role,
+});
+
+export const getGuildMember = async (
+  request: BunRequest<"/api/guilds/:guildId/members/:userId">,
+): Promise<Response> => {
+  const authResult = await requireAuth(request);
+  if (authResult instanceof Response) {
+    return authResult;
+  }
+
+  const me = authResult.user;
+  const guildId = request.params.guildId;
+  const userId = request.params.userId;
+  if (!guildId || !userId) {
+    return badRequest(request, "Invalid guild id or user id.");
+  }
+
+  const canView = await hasGuildPermission(me.id, guildId, PermissionBits.VIEW_CHANNEL);
+  if (!canView) {
+    return forbidden(request);
+  }
+
+  const member = await db
+    .select({
+      guildId: guildMembers.guildId,
+      userId: guildMembers.userId,
+      joinedAt: guildMembers.joinedAt,
+      role: guildMembers.role,
+      username: users.username,
+      displayName: users.displayName,
+      avatarUrl: users.avatarUrl,
+      avatarS3Key: users.avatarS3Key,
+    })
+    .from(guildMembers)
+    .innerJoin(users, eq(users.id, guildMembers.userId))
+    .where(and(eq(guildMembers.guildId, guildId), eq(guildMembers.userId, userId)))
+    .limit(1);
+
+  const firstMember = member[0];
+  if (!firstMember) {
+    return notFound(request);
+  }
+
+  const roleLinks = await db
+    .select({
+      roleId: guildMemberRoles.roleId,
+    })
+    .from(guildMemberRoles)
+    .where(and(eq(guildMemberRoles.guildId, guildId), eq(guildMemberRoles.userId, userId)));
+
+  return json(request, toGuildMemberPayload(guildId, firstMember, roleLinks.map(link => link.roleId)));
+};
+
 export const listGuildMembers = async (request: BunRequest<"/api/guilds/:guildId/members">): Promise<Response> => {
   const authResult = await requireAuth(request);
   if (authResult instanceof Response) {
@@ -416,6 +494,7 @@ export const listGuildMembers = async (request: BunRequest<"/api/guilds/:guildId
       username: users.username,
       displayName: users.displayName,
       avatarUrl: users.avatarUrl,
+      avatarS3Key: users.avatarS3Key,
     })
     .from(guildMembers)
     .innerJoin(users, eq(users.id, guildMembers.userId))
@@ -440,18 +519,7 @@ export const listGuildMembers = async (request: BunRequest<"/api/guilds/:guildId
 
   return json(
     request,
-    members.map(member => ({
-      guild_id: member.guildId,
-      user: {
-        id: member.userId,
-        username: member.username,
-        display_name: member.displayName,
-        avatar_url: member.avatarUrl,
-      },
-      joined_at: member.joinedAt.toISOString(),
-      roles: [guildId, ...(rolesByUser.get(member.userId) ?? [])],
-      role: member.role,
-    })),
+    members.map(member => toGuildMemberPayload(guildId, member, rolesByUser.get(member.userId) ?? [])),
   );
 };
 

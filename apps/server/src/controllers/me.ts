@@ -3,11 +3,12 @@ import { eq } from "drizzle-orm";
 import { db } from "../db";
 import { channelMembers, channels, messageReads, users } from "../db/schema";
 import { badRequest, json, notFound, parseJson, requireAuth } from "../http";
-import { getUserSummaryById } from "../lib/users";
+import { getUserSummaryById, toUserSummary } from "../lib/users";
 import {
   USERNAME_REGEX,
   emitToUsers,
   findExistingDmChannel,
+  getUserAudienceIds,
   getUserGuilds,
   listDmChannelsForUser,
   nextId,
@@ -60,6 +61,7 @@ export const updateMeProfile = async (request: Request): Promise<Response> => {
 
   if (body.avatar_url !== undefined) {
     updates.avatarUrl = body.avatar_url;
+    updates.avatarS3Key = null;
   }
 
   if (Object.keys(updates).length === 0) {
@@ -73,12 +75,11 @@ export const updateMeProfile = async (request: Request): Promise<Response> => {
       return notFound(request);
     }
 
-    return json(request, {
-      id: updated.id,
-      username: updated.username,
-      display_name: updated.displayName,
-      avatar_url: updated.avatarUrl,
-    });
+    const summary = toUserSummary(updated);
+    const recipients = await getUserAudienceIds(me.id);
+    emitToUsers(recipients, "USER_UPDATE", toSummary(summary));
+
+    return json(request, toSummary(summary));
   } catch (error) {
     if (String(error).includes("users_username_unique")) {
       return badRequest(request, "Username is already taken.");

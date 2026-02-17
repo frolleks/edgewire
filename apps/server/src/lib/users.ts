@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 import { db } from "../db";
 import { users } from "../db/schema";
+import { resolveAvatarUrl } from "../storage/s3";
 
 const USERNAME_PATTERN = /[^a-zA-Z0-9_]/g;
 
@@ -31,11 +32,19 @@ const baseUsername = (user: AuthUserLike): string => {
 
 const randomSuffix = () => Math.floor(Math.random() * 10_000).toString().padStart(4, "0");
 
-const fromRow = (row: typeof users.$inferSelect): UserSummary => ({
+type UserRowLike = {
+  id: string;
+  username: string;
+  displayName: string;
+  avatarUrl: string | null;
+  avatarS3Key: string | null;
+};
+
+export const toUserSummary = (row: UserRowLike): UserSummary => ({
   id: row.id,
   username: row.username,
   display_name: row.displayName,
-  avatar_url: row.avatarUrl,
+  avatar_url: resolveAvatarUrl(row.avatarS3Key, row.avatarUrl),
 });
 
 export const getUserSummaryById = async (userId: string): Promise<UserSummary | null> => {
@@ -43,7 +52,7 @@ export const getUserSummaryById = async (userId: string): Promise<UserSummary | 
     where: eq(users.id, userId),
   });
 
-  return row ? fromRow(row) : null;
+  return row ? toUserSummary(row) : null;
 };
 
 export const ensureAppUser = async (authUser: AuthUserLike): Promise<UserSummary> => {
@@ -51,7 +60,7 @@ export const ensureAppUser = async (authUser: AuthUserLike): Promise<UserSummary
     where: eq(users.id, authUser.id),
   });
   if (existing) {
-    return fromRow(existing);
+    return toUserSummary(existing);
   }
 
   const displayName = (authUser.name || authUser.email?.split("@")[0] || "User").slice(0, 64);
@@ -68,18 +77,19 @@ export const ensureAppUser = async (authUser: AuthUserLike): Promise<UserSummary
           username,
           displayName,
           avatarUrl: authUser.image ?? null,
+          avatarS3Key: null,
         })
         .returning();
 
       if (created) {
-        return fromRow(created);
+        return toUserSummary(created);
       }
     } catch (error) {
       const message = String(error);
       if (message.includes("users_pkey")) {
         const raceWinner = await db.query.users.findFirst({ where: eq(users.id, authUser.id) });
         if (raceWinner) {
-          return fromRow(raceWinner);
+          return toUserSummary(raceWinner);
         }
       }
 
