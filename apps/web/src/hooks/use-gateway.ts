@@ -3,7 +3,6 @@ import type {
   GatewayPacket,
   GuildChannelPayload,
   GuildCreateEvent,
-  GuildMemberListItem,
   GuildRole,
   MessagePayload,
   ReadyEvent,
@@ -12,7 +11,15 @@ import type {
 import { useQueryClient } from "@tanstack/react-query";
 import type { InfiniteData } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
-import { api, type CurrentUser, type DmChannel, type Guild, type Role, type TypingEvent } from "@/lib/api";
+import {
+  api,
+  type CurrentUser,
+  type DmChannel,
+  type Guild,
+  type GuildMemberSummary,
+  type Role,
+  type TypingEvent,
+} from "@/lib/api";
 import { GATEWAY_URL } from "@/lib/env";
 import { queryKeys } from "@/lib/query-keys";
 
@@ -83,6 +90,52 @@ const withUpdatedAuthor = (message: MessagePayload, user: UserSummary): MessageP
         author: user,
       }
     : message;
+
+type GuildMembersPage = {
+  members: GuildMemberSummary[];
+  next_after: string | null;
+};
+
+const patchGuildMembersInfinite = (
+  current: InfiniteData<GuildMembersPage> | undefined,
+  userId: string,
+  updater: (member: GuildMemberSummary) => GuildMemberSummary,
+): InfiniteData<GuildMembersPage> | undefined => {
+  if (!current) {
+    return current;
+  }
+
+  let changed = false;
+  const pages = current.pages.map(page => {
+    let pageChanged = false;
+    const members = page.members.map(member => {
+      if (member.user.id !== userId) {
+        return member;
+      }
+      pageChanged = true;
+      return updater(member);
+    });
+
+    if (!pageChanged) {
+      return page;
+    }
+
+    changed = true;
+    return {
+      ...page,
+      members,
+    };
+  });
+
+  if (!changed) {
+    return current;
+  }
+
+  return {
+    ...current,
+    pages,
+  };
+};
 
 export const useGateway = ({ enabled, userId, activeChannelId }: GatewayParams): void => {
   const queryClient = useQueryClient();
@@ -420,13 +473,41 @@ export const useGateway = ({ enabled, userId, activeChannelId }: GatewayParams):
             break;
           }
           case "GUILD_MEMBER_UPDATE": {
-            const payload = packet.d as { guild_id: string; user: { id: string }; roles: string[] };
-            queryClient.setQueriesData<GuildMemberListItem[]>(
+            const payload = packet.d as {
+              guild_id: string;
+              user: UserSummary | { id: string };
+              roles?: string[];
+              nick?: string | null;
+              joined_at?: string;
+            };
+            queryClient.setQueriesData<InfiniteData<GuildMembersPage>>(
               { queryKey: ["guild-members", payload.guild_id] },
               old =>
-                (old ?? []).map(member =>
-                  member.user.id === payload.user.id ? { ...member, roles: payload.roles } : member,
-                ),
+                patchGuildMembersInfinite(old, payload.user.id, member => ({
+                  ...member,
+                  user: {
+                    ...member.user,
+                    ...payload.user,
+                  },
+                  roles: payload.roles ?? member.roles,
+                  nick: payload.nick !== undefined ? payload.nick : member.nick,
+                  joined_at: payload.joined_at ?? member.joined_at,
+                })),
+            );
+            queryClient.setQueriesData<{ user: UserSummary; roles: string[]; joined_at: string }>(
+              { queryKey: ["guild-member", payload.guild_id] },
+              old =>
+                old && old.user.id === payload.user.id
+                  ? {
+                      ...old,
+                      user: {
+                        ...old.user,
+                        ...payload.user,
+                      },
+                      roles: payload.roles ?? old.roles,
+                      joined_at: payload.joined_at ?? old.joined_at,
+                    }
+                  : old,
             );
             break;
           }
@@ -473,18 +554,29 @@ export const useGateway = ({ enabled, userId, activeChannelId }: GatewayParams):
                   : old,
             );
 
-            queryClient.setQueriesData<GuildMemberListItem[]>(
+            queryClient.setQueriesData<InfiniteData<GuildMembersPage>>(
               { queryKey: ["guild-members"] },
               old =>
-                old
-                  ? old.map(member =>
-                      member.user.id === user.id
-                        ? {
-                            ...member,
-                            user,
-                          }
-                        : member,
-                    )
+                patchGuildMembersInfinite(old, user.id, member => ({
+                  ...member,
+                  user: {
+                    ...member.user,
+                    ...user,
+                  },
+                })),
+            );
+
+            queryClient.setQueriesData<{ user: UserSummary }>(
+              { queryKey: ["guild-member"] },
+              old =>
+                old && old.user.id === user.id
+                  ? {
+                      ...old,
+                      user: {
+                        ...old.user,
+                        ...user,
+                      },
+                    }
                   : old,
             );
             break;

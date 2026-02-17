@@ -11,7 +11,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import type { InfiniteData } from "@tanstack/react-query";
-import { Cog } from "lucide-react";
+import { Cog, X } from "lucide-react";
 import {
   type ChangeEvent,
   type FormEvent,
@@ -37,6 +37,7 @@ import AppShell from "@/components/layout/app-shell";
 import ProfileDialog from "@/components/profile/profile-dialog";
 import ProfileSettingsModal from "@/components/profile/profile-settings-modal";
 import GuildSettingsModal from "@/components/guild-settings-modal";
+import MemberList from "@/components/members/member-list";
 import { getDisplayInitial } from "@/components/utils/format";
 import { applyChannelBulkPatch } from "@/components/utils/channel-patch";
 import { dedupeById, dedupeChronological } from "@/components/utils/dedupe";
@@ -126,6 +127,7 @@ export function ChatApp() {
   >([]);
   const [isSendingMessage, setIsSendingMessage] = useState(false);
   const [deletingMessageIds, setDeletingMessageIds] = useState<string[]>([]);
+  const [mobileMembersOpen, setMobileMembersOpen] = useState(false);
 
   const typingThrottleRef = useRef(0);
   const messageListContainerRef = useRef<HTMLDivElement>(null);
@@ -219,10 +221,15 @@ export function ChatApp() {
         null)
       : null;
 
+  const isGuildTextChannel =
+    route.mode === "guild" &&
+    Boolean(route.guildId) &&
+    activeGuildChannel?.type === ChannelType.GUILD_TEXT;
+
   const activeMessageChannelId =
     route.mode === "dm"
       ? (activeDm?.id ?? null)
-      : activeGuildChannel?.type === ChannelType.GUILD_TEXT
+      : isGuildTextChannel
         ? activeGuildChannel.id
         : null;
 
@@ -568,6 +575,16 @@ export function ChatApp() {
   }, [location.pathname, navigate]);
 
   useEffect(() => {
+    if (!isGuildTextChannel && mobileMembersOpen) {
+      setMobileMembersOpen(false);
+    }
+  }, [isGuildTextChannel, mobileMembersOpen]);
+
+  useEffect(() => {
+    setMobileMembersOpen(false);
+  }, [route.channelId, route.guildId, route.mode]);
+
+  useEffect(() => {
     if (
       route.mode !== "guild" ||
       !route.guildId ||
@@ -683,7 +700,10 @@ export function ChatApp() {
   );
 
   const typingEvents = typingQuery.data;
-  const typingUserIds = new Set(typingEvents.map((event) => event.user_id));
+  const typingUserIds = useMemo(
+    () => [...new Set((typingEvents ?? []).map((event) => event.user_id))],
+    [typingEvents],
+  );
   const profileRoles = useMemo(() => {
     if (
       !profileDialog?.guildId ||
@@ -1004,7 +1024,11 @@ export function ChatApp() {
 
   return (
     <>
-      <AppShell>
+      <AppShell
+        className={
+          isGuildTextChannel ? "xl:grid-cols-[72px_300px_1fr_260px]" : undefined
+        }
+      >
         <GuildSwitcher
           route={route}
           guilds={guilds}
@@ -1100,6 +1124,8 @@ export function ChatApp() {
                 dmUsername={activeDm?.recipients[0]?.username}
                 canCreateInvite={canManageChannels && route.mode === "guild"}
                 onCreateInvite={openInvite}
+                showMembersToggle={isGuildTextChannel}
+                onToggleMembers={() => setMobileMembersOpen(true)}
               />
 
               <MessageList
@@ -1110,7 +1136,7 @@ export function ChatApp() {
                 routeMode={route.mode}
                 currentUserId={me?.id ?? sessionUser?.id ?? null}
                 activeGuildChannelPermissions={activeGuildChannelPermissions}
-                typingIndicator={typingUserIds.size > 0}
+                typingIndicator={typingUserIds.length > 0}
                 onLoadOlder={() => messagesQuery.fetchNextPage()}
                 canLoadOlder={Boolean(messagesQuery.hasNextPage)}
                 isLoadingOlder={messagesQuery.isFetchingNextPage}
@@ -1157,7 +1183,57 @@ export function ChatApp() {
             </div>
           )}
         </main>
+
+        {isGuildTextChannel && route.guildId ? (
+          <div className="hidden xl:block">
+            <MemberList
+              guildId={route.guildId}
+              currentUserId={me?.id ?? sessionUser?.id ?? ""}
+              onOpenProfile={openProfile}
+              onStartDm={(userId) => createDmMutation.mutate(userId)}
+              typingUserIds={typingUserIds}
+            />
+          </div>
+        ) : null}
       </AppShell>
+
+      {isGuildTextChannel && route.guildId && mobileMembersOpen ? (
+        <div className="fixed inset-0 z-40 xl:hidden">
+          <button
+            type="button"
+            className="absolute inset-0 bg-background/70"
+            onClick={() => setMobileMembersOpen(false)}
+            aria-label="Close members panel"
+          />
+          <div className="absolute inset-y-0 right-0 w-[min(100vw-56px,320px)]">
+            <div className="relative h-full">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                className="absolute right-2 top-2 z-10"
+                onClick={() => setMobileMembersOpen(false)}
+                aria-label="Close members panel"
+              >
+                <X className="size-4" />
+              </Button>
+              <MemberList
+                guildId={route.guildId}
+                currentUserId={me?.id ?? sessionUser?.id ?? ""}
+                onOpenProfile={(user) => {
+                  setMobileMembersOpen(false);
+                  openProfile(user);
+                }}
+                onStartDm={(userId) => {
+                  setMobileMembersOpen(false);
+                  createDmMutation.mutate(userId);
+                }}
+                typingUserIds={typingUserIds}
+              />
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       <ProfileDialog
         state={profileDialog}

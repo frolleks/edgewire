@@ -1,6 +1,6 @@
 import { ChannelType } from "@discord/types";
 import type { BunRequest } from "bun";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, gt, ilike, inArray, or } from "drizzle-orm";
 import { db } from "../db";
 import {
   channelPermissionOverwrites,
@@ -476,21 +476,25 @@ export const listGuildMembers = async (request: BunRequest<"/api/guilds/:guildId
     return badRequest(request, "Invalid guild id.");
   }
 
-  const canManageGuild = await hasGuildPermission(me.id, guildId, PermissionBits.MANAGE_GUILD);
-  if (!canManageGuild) {
-    return forbidden(request, "Missing MANAGE_GUILD.");
+  const membership = await db.query.guildMembers.findFirst({
+    columns: { userId: true },
+    where: and(eq(guildMembers.guildId, guildId), eq(guildMembers.userId, me.id)),
+  });
+  if (!membership) {
+    return forbidden(request);
   }
 
   const searchParams = new URL(request.url).searchParams;
-  const limit = Math.max(1, Math.min(Number(searchParams.get("limit") ?? 50), 200));
-  const offset = Math.max(0, Number(searchParams.get("offset") ?? 0));
+  const rawLimit = Number(searchParams.get("limit") ?? 50);
+  const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(Math.trunc(rawLimit), 1000)) : 50;
+  const after = searchParams.get("after")?.trim() || undefined;
+  const query = searchParams.get("query")?.trim() || undefined;
 
   const members = await db
     .select({
       guildId: guildMembers.guildId,
       userId: guildMembers.userId,
       joinedAt: guildMembers.joinedAt,
-      role: guildMembers.role,
       username: users.username,
       displayName: users.displayName,
       avatarUrl: users.avatarUrl,
@@ -498,17 +502,29 @@ export const listGuildMembers = async (request: BunRequest<"/api/guilds/:guildId
     })
     .from(guildMembers)
     .innerJoin(users, eq(users.id, guildMembers.userId))
-    .where(eq(guildMembers.guildId, guildId))
-    .limit(limit)
-    .offset(offset);
+    .where(
+      and(
+        eq(guildMembers.guildId, guildId),
+        after ? gt(guildMembers.userId, after) : undefined,
+        query ? or(ilike(users.displayName, `${query}%`), ilike(users.username, `${query}%`)) : undefined,
+      ),
+    )
+    .orderBy(asc(guildMembers.userId))
+    .limit(limit + 1);
 
-  const roleLinks = await db
-    .select({
-      userId: guildMemberRoles.userId,
-      roleId: guildMemberRoles.roleId,
-    })
-    .from(guildMemberRoles)
-    .where(eq(guildMemberRoles.guildId, guildId));
+  const hasMore = members.length > limit;
+  const pageMembers = hasMore ? members.slice(0, limit) : members;
+
+  const memberIds = pageMembers.map(member => member.userId);
+  const roleLinks = memberIds.length
+    ? await db
+        .select({
+          userId: guildMemberRoles.userId,
+          roleId: guildMemberRoles.roleId,
+        })
+        .from(guildMemberRoles)
+        .where(and(eq(guildMemberRoles.guildId, guildId), inArray(guildMemberRoles.userId, memberIds)))
+    : [];
 
   const rolesByUser = new Map<string, string[]>();
   for (const roleLink of roleLinks) {
@@ -517,10 +533,21 @@ export const listGuildMembers = async (request: BunRequest<"/api/guilds/:guildId
     rolesByUser.set(roleLink.userId, current);
   }
 
-  return json(
-    request,
-    members.map(member => toGuildMemberPayload(guildId, member, rolesByUser.get(member.userId) ?? [])),
-  );
+  return json(request, {
+    members: pageMembers.map(member => ({
+      user: {
+        id: member.userId,
+        username: member.username,
+        display_name: member.displayName,
+        avatar_url: resolveAvatarUrl(member.avatarS3Key, member.avatarUrl),
+      },
+      joined_at: member.joinedAt.toISOString(),
+      roles: [guildId, ...(rolesByUser.get(member.userId) ?? [])],
+      nick: null,
+      presence: null,
+    })),
+    next_after: hasMore ? pageMembers[pageMembers.length - 1]?.userId ?? null : null,
+  });
 };
 
 export const getMyGuildPermissions = async (

@@ -38,6 +38,15 @@ export type GuildChannel = GuildChannelPayload;
 export type Invite = InvitePayload;
 export type Role = GuildRole;
 export type GuildMember = GuildMemberListItem;
+export type GuildMemberSummary = {
+  user: UserSummary;
+  roles: string[];
+  joined_at: string;
+  nick?: string | null;
+  presence?: {
+    status: "online" | "idle" | "dnd" | "offline";
+  } | null;
+};
 
 export type TypingEvent = {
   channel_id: string;
@@ -210,12 +219,22 @@ export const api = {
       method: "DELETE",
     }),
 
-  listGuildMembers: (guildId: string, params?: { limit?: number; offset?: number }) => {
+  listGuildMembers: (
+    guildId: string,
+    params?: {
+      limit?: number;
+      after?: string;
+      query?: string;
+    },
+  ) => {
     const query = new URLSearchParams();
     if (params?.limit !== undefined) query.set("limit", String(params.limit));
-    if (params?.offset !== undefined) query.set("offset", String(params.offset));
+    if (params?.after !== undefined && params.after !== "") query.set("after", params.after);
+    if (params?.query !== undefined && params.query !== "") query.set("query", params.query);
     const suffix = query.toString();
-    return apiFetch<GuildMember[]>(`/api/guilds/${guildId}/members${suffix ? `?${suffix}` : ""}`);
+    return apiFetch<{ members: GuildMemberSummary[]; next_after: string | null }>(
+      `/api/guilds/${guildId}/members${suffix ? `?${suffix}` : ""}`,
+    );
   },
   getGuildMember: (guildId: string, userId: string) =>
     apiFetch<GuildMember>(`/api/guilds/${guildId}/members/${userId}`),

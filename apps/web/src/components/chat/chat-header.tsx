@@ -1,3 +1,4 @@
+import { Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 type ChatHeaderProps = {
@@ -6,6 +7,8 @@ type ChatHeaderProps = {
   dmUsername?: string;
   canCreateInvite: boolean;
   onCreateInvite: () => void;
+  showMembersToggle?: boolean;
+  onToggleMembers?: () => void;
 };
 
 export function ChatHeader({
@@ -14,6 +17,8 @@ export function ChatHeader({
   dmUsername,
   canCreateInvite,
   onCreateInvite,
+  showMembersToggle,
+  onToggleMembers,
 }: ChatHeaderProps) {
   return (
     <header className="h-14 shrink-0 border-b px-4 flex items-center justify-between bg-card">
@@ -25,11 +30,24 @@ export function ChatHeader({
           <p className="text-xs truncate">@{dmUsername}</p>
         ) : null}
       </div>
-      {canCreateInvite && (
-        <Button variant="outline" size="sm" onClick={onCreateInvite}>
-          Create Invite
-        </Button>
-      )}
+      <div className="flex items-center gap-2">
+        {showMembersToggle && onToggleMembers ? (
+          <Button
+            variant="outline"
+            size="sm"
+            className="xl:hidden"
+            onClick={onToggleMembers}
+          >
+            <Users className="size-4" />
+            Members
+          </Button>
+        ) : null}
+        {canCreateInvite ? (
+          <Button variant="outline" size="sm" onClick={onCreateInvite}>
+            Create Invite
+          </Button>
+        ) : null}
+      </div>
     </header>
   );
 }

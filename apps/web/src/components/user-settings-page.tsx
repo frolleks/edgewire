@@ -30,7 +30,7 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { authClient } from "@/lib/auth-client";
-import { api, type CurrentUser, type CurrentUserSettings, type DmChannel, type GuildMember, type UserTheme } from "@/lib/api";
+import { api, type CurrentUser, type CurrentUserSettings, type DmChannel, type GuildMemberSummary, type UserTheme } from "@/lib/api";
 import { ApiError } from "@/lib/http";
 import { queryKeys } from "@/lib/query-keys";
 import { syncDocumentTheme } from "@/lib/theme";
@@ -126,6 +126,11 @@ const withUpdatedAuthor = (message: MessagePayload, user: UserSummary): MessageP
       }
     : message;
 
+type GuildMembersPage = {
+  members: GuildMemberSummary[];
+  next_after: string | null;
+};
+
 const patchUserCaches = (queryClient: ReturnType<typeof useQueryClient>, user: UserSummary): void => {
   queryClient.setQueryData<CurrentUser>(queryKeys.me, old =>
     old && old.id === user.id ? { ...old, ...user } : old,
@@ -152,21 +157,41 @@ const patchUserCaches = (queryClient: ReturnType<typeof useQueryClient>, user: U
         : old,
   );
 
-  queryClient.setQueriesData<GuildMember[]>(
+  queryClient.setQueriesData<InfiniteData<GuildMembersPage>>(
     { queryKey: ["guild-members"] },
     old =>
       old
-        ? old.map(member =>
-            member.user.id === user.id
-              ? {
-                  ...member,
-                  user: {
-                    ...member.user,
-                    ...user,
-                  },
-                }
-              : member,
-          )
+        ? {
+            ...old,
+            pages: old.pages.map(page => ({
+              ...page,
+              members: page.members.map(member =>
+                member.user.id === user.id
+                  ? {
+                      ...member,
+                      user: {
+                        ...member.user,
+                        ...user,
+                      },
+                    }
+                  : member,
+              ),
+            })),
+          }
+        : old,
+  );
+
+  queryClient.setQueriesData<{ user: UserSummary }>(
+    { queryKey: ["guild-member"] },
+    old =>
+      old && old.user.id === user.id
+        ? {
+            ...old,
+            user: {
+              ...old.user,
+              ...user,
+            },
+          }
         : old,
   );
 };

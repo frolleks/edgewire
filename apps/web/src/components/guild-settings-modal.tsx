@@ -106,13 +106,14 @@ export const GuildSettingsModal = ({
 }: GuildSettingsModalProps) => {
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<SettingsTab>("overview");
-  const [membersPage, setMembersPage] = useState(0);
+  const [membersCursors, setMembersCursors] = useState<string[]>([""]);
   const [overviewDraft, setOverviewDraft] = useState<OverviewDraft>(defaultOverviewDraft);
   const [selectedRoleId, setSelectedRoleId] = useState<string | null>(null);
   const [roleDraft, setRoleDraft] = useState<RoleDraft | null>(null);
   const [memberRoleSelection, setMemberRoleSelection] = useState<Record<string, string>>({});
 
   const membersLimit = 20;
+  const membersCursor = membersCursors[membersCursors.length - 1] ?? "";
 
   const guildSettingsQuery = useQuery({
     queryKey: queryKeys.guildSettings(guildId ?? "none"),
@@ -127,8 +128,12 @@ export const GuildSettingsModal = ({
   });
 
   const guildMembersQuery = useQuery({
-    queryKey: queryKeys.guildMembers(guildId ?? "none", membersPage, membersLimit),
-    queryFn: () => api.listGuildMembers(guildId!, { limit: membersLimit, offset: membersPage * membersLimit }),
+    queryKey: ["guild-members-settings", guildId ?? "none", membersCursor],
+    queryFn: () =>
+      api.listGuildMembers(guildId!, {
+        limit: membersLimit,
+        after: membersCursor || undefined,
+      }),
     enabled: open && Boolean(guildId) && tab === "members" && canManageGuild,
   });
 
@@ -209,6 +214,7 @@ export const GuildSettingsModal = ({
     mutationFn: (payload: { userId: string; roleId: string }) => api.addGuildMemberRole(guildId!, payload.userId, payload.roleId),
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ["guild-members", guildId] });
+      queryClient.invalidateQueries({ queryKey: ["guild-members-settings", guildId] });
       setMemberRoleSelection(previous => ({
         ...previous,
         [variables.userId]: "none",
@@ -224,6 +230,7 @@ export const GuildSettingsModal = ({
       api.removeGuildMemberRole(guildId!, payload.userId, payload.roleId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["guild-members", guildId] });
+      queryClient.invalidateQueries({ queryKey: ["guild-members-settings", guildId] });
     },
     onError: error => {
       toast.error(error instanceof Error ? error.message : "Could not remove role from member.");
@@ -236,7 +243,8 @@ export const GuildSettingsModal = ({
     [rolesQuery.data],
   );
   const roleById = useMemo(() => new Map(roles.map(role => [role.id, role])), [roles]);
-  const members = guildMembersQuery.data ?? [];
+  const members = guildMembersQuery.data?.members ?? [];
+  const hasMoreMembers = Boolean(guildMembersQuery.data?.next_after);
   const textChannels = useMemo(
     () => dedupeById(channels).filter(channel => channel.type === ChannelType.GUILD_TEXT),
     [channels],
@@ -250,7 +258,7 @@ export const GuildSettingsModal = ({
       return;
     }
 
-    setMembersPage(0);
+    setMembersCursors([""]);
     setMemberRoleSelection({});
     setTab("overview");
   }, [open, guildId]);
@@ -856,15 +864,25 @@ export const GuildSettingsModal = ({
                 <div className="flex justify-end gap-2">
                   <Button
                     variant="outline"
-                    disabled={membersPage === 0}
-                    onClick={() => setMembersPage(previous => Math.max(0, previous - 1))}
+                    disabled={membersCursors.length <= 1 || guildMembersQuery.isFetching}
+                    onClick={() =>
+                      setMembersCursors(previous =>
+                        previous.length <= 1 ? previous : previous.slice(0, previous.length - 1),
+                      )
+                    }
                   >
                     Previous
                   </Button>
                   <Button
                     variant="outline"
-                    disabled={members.length < membersLimit}
-                    onClick={() => setMembersPage(previous => previous + 1)}
+                    disabled={!hasMoreMembers || guildMembersQuery.isFetching}
+                    onClick={() => {
+                      const nextAfter = guildMembersQuery.data?.next_after;
+                      if (!nextAfter) {
+                        return;
+                      }
+                      setMembersCursors(previous => [...previous, nextAfter]);
+                    }}
                   >
                     Next
                   </Button>
