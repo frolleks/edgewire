@@ -10,6 +10,7 @@ import {
   buildGuildCreateEvent,
   createInvite,
   createInviteSchema,
+  emitToGuild,
   emitToUsers,
   hydrateInvitePayload,
   isInviteExpired,
@@ -107,6 +108,7 @@ export const acceptInvite = async (request: BunRequest<"/api/invites/:code/accep
   }
 
   let joined = false;
+  let joinedAt: Date | null = null;
   await db.transaction(async tx => {
     const membership = await tx.query.guildMembers.findFirst({
       where: and(eq(guildMembers.guildId, guild.id), eq(guildMembers.userId, me.id)),
@@ -114,17 +116,35 @@ export const acceptInvite = async (request: BunRequest<"/api/invites/:code/accep
 
     if (!membership) {
       joined = true;
-      await tx.insert(guildMembers).values({
-        guildId: guild.id,
-        userId: me.id,
-        role: "MEMBER",
-      });
+      const [createdMembership] = await tx
+        .insert(guildMembers)
+        .values({
+          guildId: guild.id,
+          userId: me.id,
+          role: "MEMBER",
+        })
+        .returning({
+          joinedAt: guildMembers.joinedAt,
+        });
+
+      joinedAt = createdMembership?.joinedAt ?? null;
 
       await tx.update(invites).set({ uses: invite.uses + 1 }).where(eq(invites.code, code));
     }
   });
 
   if (joined) {
+    await emitToGuild(guild.id, "GUILD_MEMBER_ADD", {
+      guild_id: guild.id,
+      member: {
+        user: me,
+        roles: [guild.id],
+        joined_at: (joinedAt ?? new Date()).toISOString(),
+        nick: null,
+        presence: null,
+      },
+    });
+
     const guildEvent = await buildGuildCreateEvent(guild.id, me.id);
     if (guildEvent) {
       emitToUsers([me.id], "GUILD_CREATE", guildEvent);

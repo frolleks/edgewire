@@ -1,11 +1,23 @@
 import { ChannelType } from "@discord/types";
-import { eq } from "drizzle-orm";
+import type { BunRequest } from "bun";
+import { and, eq } from "drizzle-orm";
 import { db } from "../db";
-import { channelMembers, channels, messageReads, userProfiles, userSettings, users } from "../db/schema";
-import { badRequest, json, notFound, parseJson, requireAuth } from "../http";
+import {
+  channelMembers,
+  channels,
+  guildMemberRoles,
+  guildMembers,
+  guilds,
+  messageReads,
+  userProfiles,
+  userSettings,
+  users,
+} from "../db/schema";
+import { badRequest, empty, json, notFound, parseJson, requireAuth } from "../http";
 import { getCurrentUserById, getUserSummaryById, isValidUsername, normalizeUsernameForUpdate } from "../lib/users";
 import {
   broadcastUserUpdate,
+  emitToGuild,
   emitToUsers,
   emitUserSettingsUpdate,
   findExistingDmChannel,
@@ -430,3 +442,55 @@ export const listMyGuilds = async (request: Request): Promise<Response> => {
   return json(request, guildList);
 };
 
+export const leaveMyGuild = async (
+  request: BunRequest<"/api/users/@me/guilds/:guildId">,
+): Promise<Response> => {
+  const authResult = await requireAuth(request);
+  if (authResult instanceof Response) {
+    return authResult;
+  }
+
+  const me = authResult.user;
+  const guildId = request.params.guildId;
+  if (!guildId) {
+    return badRequest(request, "Invalid guild id.");
+  }
+
+  const guild = await db.query.guilds.findFirst({
+    where: eq(guilds.id, guildId),
+  });
+  if (!guild) {
+    return notFound(request);
+  }
+
+  const membership = await db.query.guildMembers.findFirst({
+    where: and(eq(guildMembers.guildId, guildId), eq(guildMembers.userId, me.id)),
+  });
+  if (!membership) {
+    return notFound(request);
+  }
+
+  if (guild.ownerId === me.id) {
+    return badRequest(request, "Guild owners cannot leave their own server.");
+  }
+
+  await db.transaction(async tx => {
+    await tx
+      .delete(guildMemberRoles)
+      .where(and(eq(guildMemberRoles.guildId, guildId), eq(guildMemberRoles.userId, me.id)));
+
+    await tx
+      .delete(guildMembers)
+      .where(and(eq(guildMembers.guildId, guildId), eq(guildMembers.userId, me.id)));
+  });
+
+  const payload = {
+    guild_id: guildId,
+    user: { id: me.id },
+  };
+
+  await emitToGuild(guildId, "GUILD_MEMBER_REMOVE", payload);
+  emitToUsers([me.id], "GUILD_MEMBER_REMOVE", payload);
+
+  return empty(request, 204);
+};

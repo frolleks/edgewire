@@ -195,12 +195,13 @@ export function MemberList({
 
   return (
     <aside className="flex h-full min-h-0 flex-col border-l bg-card">
-      <div className="border-b px-3 py-3">
-        <div className="flex items-center justify-between gap-2">
-          <h3 className="text-sm font-semibold">Members</h3>
-          <span className="text-xs text-muted-foreground">{loadedCount}</span>
-        </div>
-        <div className="relative mt-2">
+      <div className="h-14 shrink-0 border-b px-3 flex items-center justify-between gap-2">
+        <h3 className="text-sm font-semibold">Members</h3>
+        <span className="text-xs text-muted-foreground">{loadedCount}</span>
+      </div>
+
+      <div className="border-b px-3 py-2">
+        <div className="relative">
           <Input
             value={searchInput}
             onChange={(event) => setSearchInput(event.target.value)}

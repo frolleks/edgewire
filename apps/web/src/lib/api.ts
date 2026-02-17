@@ -111,6 +111,10 @@ export const api = {
     }),
 
   listGuilds: () => apiFetch<Guild[]>("/api/users/@me/guilds"),
+  leaveGuild: (guildId: string) =>
+    apiFetch<void>(`/api/users/@me/guilds/${guildId}`, {
+      method: "DELETE",
+    }),
   createGuild: (name: string) =>
     apiFetch<Guild>("/api/guilds", {
       method: "POST",

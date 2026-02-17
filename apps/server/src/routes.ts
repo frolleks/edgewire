@@ -18,6 +18,7 @@ import { acceptInvite, createChannelInvite, getInvite } from "./controllers/invi
 import {
   createMyChannel,
   getMe,
+  leaveMyGuild,
   listMyChannels,
   listMyGuilds,
   patchMe,
@@ -123,6 +124,14 @@ export const routes = {
     PUT: auth404,
     PATCH: auth404,
     DELETE: auth404,
+    OPTIONS: corsPreflight,
+  },
+  "/api/users/@me/guilds/:guildId": {
+    DELETE: safe(leaveMyGuild as Handler),
+    GET: auth404,
+    POST: auth404,
+    PUT: auth404,
+    PATCH: auth404,
     OPTIONS: corsPreflight,
   },
   "/api/guilds": {

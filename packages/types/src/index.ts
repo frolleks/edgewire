@@ -189,7 +189,27 @@ export interface GuildRoleDeleteEvent {
 export interface GuildMemberUpdateEvent {
   guild_id: string;
   user: Pick<UserSummary, "id">;
-  roles: string[];
+  roles?: string[];
+  nick?: string | null;
+  joined_at?: string;
+}
+
+export interface GuildMemberAddEvent {
+  guild_id: string;
+  member: {
+    user: UserSummary;
+    roles: string[];
+    joined_at: string;
+    nick?: string | null;
+    presence?: {
+      status: "online" | "idle" | "dnd" | "offline";
+    } | null;
+  };
+}
+
+export interface GuildMemberRemoveEvent {
+  guild_id: string;
+  user: Pick<UserSummary, "id">;
 }
 
 export interface GatewayHello {

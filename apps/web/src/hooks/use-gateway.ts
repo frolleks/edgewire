@@ -96,6 +96,71 @@ type GuildMembersPage = {
   next_after: string | null;
 };
 
+const matchesMemberSearch = (member: GuildMemberSummary, searchQuery: string): boolean => {
+  const normalized = searchQuery.trim().toLowerCase();
+  if (!normalized) {
+    return true;
+  }
+
+  const displayName = member.user.display_name.toLowerCase();
+  const username = member.user.username.toLowerCase();
+  const nick = member.nick?.toLowerCase() ?? "";
+
+  return (
+    displayName.startsWith(normalized) ||
+    username.startsWith(normalized) ||
+    nick.startsWith(normalized)
+  );
+};
+
+const upsertGuildMemberPage = (
+  current: GuildMembersPage | undefined,
+  member: GuildMemberSummary,
+  searchQuery = "",
+): GuildMembersPage | undefined => {
+  if (!current) {
+    return current;
+  }
+
+  const index = current.members.findIndex(existing => existing.user.id === member.user.id);
+  if (index !== -1) {
+    const nextMembers = [...current.members];
+    nextMembers[index] = member;
+    return {
+      ...current,
+      members: nextMembers,
+    };
+  }
+
+  if (!matchesMemberSearch(member, searchQuery)) {
+    return current;
+  }
+
+  return {
+    ...current,
+    members: [member, ...current.members],
+  };
+};
+
+const removeGuildMemberFromPage = (
+  current: GuildMembersPage | undefined,
+  userId: string,
+): GuildMembersPage | undefined => {
+  if (!current) {
+    return current;
+  }
+
+  const nextMembers = current.members.filter(member => member.user.id !== userId);
+  if (nextMembers.length === current.members.length) {
+    return current;
+  }
+
+  return {
+    ...current,
+    members: nextMembers,
+  };
+};
+
 const patchGuildMembersInfinite = (
   current: InfiniteData<GuildMembersPage> | undefined,
   userId: string,
@@ -120,6 +185,72 @@ const patchGuildMembersInfinite = (
       return page;
     }
 
+    changed = true;
+    return {
+      ...page,
+      members,
+    };
+  });
+
+  if (!changed) {
+    return current;
+  }
+
+  return {
+    ...current,
+    pages,
+  };
+};
+
+const upsertGuildMemberInfinite = (
+  current: InfiniteData<GuildMembersPage> | undefined,
+  member: GuildMemberSummary,
+  searchQuery = "",
+): InfiniteData<GuildMembersPage> | undefined => {
+  if (!current) {
+    return current;
+  }
+
+  const patched = patchGuildMembersInfinite(current, member.user.id, () => member);
+  if (patched !== current) {
+    return patched;
+  }
+
+  if (!matchesMemberSearch(member, searchQuery)) {
+    return current;
+  }
+
+  const [firstPage, ...rest] = current.pages;
+  if (!firstPage) {
+    return current;
+  }
+
+  return {
+    ...current,
+    pages: [
+      {
+        ...firstPage,
+        members: [member, ...firstPage.members],
+      },
+      ...rest,
+    ],
+  };
+};
+
+const removeGuildMemberFromInfinite = (
+  current: InfiniteData<GuildMembersPage> | undefined,
+  userId: string,
+): InfiniteData<GuildMembersPage> | undefined => {
+  if (!current) {
+    return current;
+  }
+
+  let changed = false;
+  const pages = current.pages.map(page => {
+    const members = page.members.filter(member => member.user.id !== userId);
+    if (members.length === page.members.length) {
+      return page;
+    }
     changed = true;
     return {
       ...page,
@@ -480,20 +611,71 @@ export const useGateway = ({ enabled, userId, activeChannelId }: GatewayParams):
               nick?: string | null;
               joined_at?: string;
             };
-            queryClient.setQueriesData<InfiniteData<GuildMembersPage>>(
-              { queryKey: ["guild-members", payload.guild_id] },
+            const memberQueries = queryClient.getQueryCache().findAll({
+              queryKey: ["guild-members", payload.guild_id],
+            });
+            for (const query of memberQueries) {
+              const searchQuery =
+                typeof query.queryKey[2] === "string" ? query.queryKey[2] : "";
+              queryClient.setQueryData<InfiniteData<GuildMembersPage>>(
+                query.queryKey,
+                old => {
+                  if (!old) {
+                    return old;
+                  }
+
+                  const patched = patchGuildMembersInfinite(old, payload.user.id, member => ({
+                    ...member,
+                    user: {
+                      ...member.user,
+                      ...payload.user,
+                    },
+                    roles: payload.roles ?? member.roles,
+                    nick: payload.nick !== undefined ? payload.nick : member.nick,
+                    joined_at: payload.joined_at ?? member.joined_at,
+                  }));
+
+                  if (!patched || !searchQuery) {
+                    return patched;
+                  }
+
+                  const updatedMember = patched.pages
+                    .flatMap(page => page.members)
+                    .find(member => member.user.id === payload.user.id);
+
+                  if (updatedMember && !matchesMemberSearch(updatedMember, searchQuery)) {
+                    return removeGuildMemberFromInfinite(patched, payload.user.id);
+                  }
+
+                  return patched;
+                },
+              );
+            }
+
+            queryClient.setQueriesData<GuildMembersPage>(
+              { queryKey: ["guild-members-settings", payload.guild_id] },
               old =>
-                patchGuildMembersInfinite(old, payload.user.id, member => ({
-                  ...member,
-                  user: {
-                    ...member.user,
-                    ...payload.user,
-                  },
-                  roles: payload.roles ?? member.roles,
-                  nick: payload.nick !== undefined ? payload.nick : member.nick,
-                  joined_at: payload.joined_at ?? member.joined_at,
-                })),
+                old
+                  ? {
+                      ...old,
+                      members: old.members.map(member =>
+                        member.user.id === payload.user.id
+                          ? {
+                              ...member,
+                              user: {
+                                ...member.user,
+                                ...payload.user,
+                              },
+                              roles: payload.roles ?? member.roles,
+                              nick: payload.nick !== undefined ? payload.nick : member.nick,
+                              joined_at: payload.joined_at ?? member.joined_at,
+                            }
+                          : member,
+                      ),
+                    }
+                  : old,
             );
+
             queryClient.setQueriesData<{ user: UserSummary; roles: string[]; joined_at: string }>(
               { queryKey: ["guild-member", payload.guild_id] },
               old =>
@@ -509,6 +691,69 @@ export const useGateway = ({ enabled, userId, activeChannelId }: GatewayParams):
                     }
                   : old,
             );
+            break;
+          }
+          case "GUILD_MEMBER_ADD": {
+            const payload = packet.d as {
+              guild_id: string;
+              member: GuildMemberSummary;
+            };
+
+            const memberQueries = queryClient.getQueryCache().findAll({
+              queryKey: ["guild-members", payload.guild_id],
+            });
+            for (const query of memberQueries) {
+              const searchQuery =
+                typeof query.queryKey[2] === "string" ? query.queryKey[2] : "";
+              queryClient.setQueryData<InfiniteData<GuildMembersPage>>(
+                query.queryKey,
+                old => upsertGuildMemberInfinite(old, payload.member, searchQuery),
+              );
+            }
+
+            queryClient.setQueriesData<GuildMembersPage>(
+              { queryKey: ["guild-members-settings", payload.guild_id] },
+              old => upsertGuildMemberPage(old, payload.member),
+            );
+            break;
+          }
+          case "GUILD_MEMBER_REMOVE": {
+            const payload = packet.d as {
+              guild_id: string;
+              user: { id: string };
+            };
+
+            queryClient.setQueriesData<InfiniteData<GuildMembersPage>>(
+              { queryKey: ["guild-members", payload.guild_id] },
+              old => removeGuildMemberFromInfinite(old, payload.user.id),
+            );
+
+            queryClient.setQueriesData<GuildMembersPage>(
+              { queryKey: ["guild-members-settings", payload.guild_id] },
+              old => removeGuildMemberFromPage(old, payload.user.id),
+            );
+
+            queryClient.removeQueries({
+              queryKey: queryKeys.guildMember(payload.guild_id, payload.user.id),
+            });
+
+            if (payload.user.id === userId) {
+              queryClient.setQueryData<Guild[]>(queryKeys.guilds, old =>
+                (old ?? []).filter(guild => guild.id !== payload.guild_id),
+              );
+              queryClient.removeQueries({
+                queryKey: queryKeys.guildChannels(payload.guild_id),
+              });
+              queryClient.removeQueries({
+                queryKey: queryKeys.guildPermissions(payload.guild_id),
+              });
+              queryClient.removeQueries({
+                queryKey: queryKeys.guildRoles(payload.guild_id),
+              });
+              queryClient.removeQueries({
+                queryKey: queryKeys.guildSettings(payload.guild_id),
+              });
+            }
             break;
           }
           case "GUILD_UPDATE": {
@@ -554,16 +799,63 @@ export const useGateway = ({ enabled, userId, activeChannelId }: GatewayParams):
                   : old,
             );
 
-            queryClient.setQueriesData<InfiniteData<GuildMembersPage>>(
-              { queryKey: ["guild-members"] },
+            const memberQueries = queryClient.getQueryCache().findAll({
+              queryKey: ["guild-members"],
+            });
+            for (const query of memberQueries) {
+              const searchQuery =
+                typeof query.queryKey[2] === "string" ? query.queryKey[2] : "";
+              queryClient.setQueryData<InfiniteData<GuildMembersPage>>(
+                query.queryKey,
+                old => {
+                  if (!old) {
+                    return old;
+                  }
+
+                  const patched = patchGuildMembersInfinite(old, user.id, member => ({
+                    ...member,
+                    user: {
+                      ...member.user,
+                      ...user,
+                    },
+                  }));
+
+                  if (!patched || !searchQuery) {
+                    return patched;
+                  }
+
+                  const updatedMember = patched.pages
+                    .flatMap(page => page.members)
+                    .find(member => member.user.id === user.id);
+
+                  if (updatedMember && !matchesMemberSearch(updatedMember, searchQuery)) {
+                    return removeGuildMemberFromInfinite(patched, user.id);
+                  }
+
+                  return patched;
+                },
+              );
+            }
+
+            queryClient.setQueriesData<GuildMembersPage>(
+              { queryKey: ["guild-members-settings"] },
               old =>
-                patchGuildMembersInfinite(old, user.id, member => ({
-                  ...member,
-                  user: {
-                    ...member.user,
-                    ...user,
-                  },
-                })),
+                old
+                  ? {
+                      ...old,
+                      members: old.members.map(member =>
+                        member.user.id === user.id
+                          ? {
+                              ...member,
+                              user: {
+                                ...member.user,
+                                ...user,
+                              },
+                            }
+                          : member,
+                      ),
+                    }
+                  : old,
             );
 
             queryClient.setQueriesData<{ user: UserSummary }>(

@@ -245,6 +245,13 @@ export function ChatApp() {
   const canManageChannels =
     route.mode === "guild" &&
     hasGuildPermission(PermissionBits.MANAGE_CHANNELS);
+  const currentUserId = meQuery.data?.id ?? sessionUser?.id ?? null;
+  const canLeaveActiveGuild = Boolean(
+    route.mode === "guild" &&
+      activeGuild &&
+      currentUserId &&
+      activeGuild.owner_id !== currentUserId,
+  );
 
   useGateway({
     enabled: Boolean(sessionUser?.id),
@@ -320,6 +327,36 @@ export function ChatApp() {
     onError: (error) => {
       toast.error(
         error instanceof Error ? error.message : "Could not create guild.",
+      );
+    },
+  });
+
+  const leaveGuildMutation = useMutation({
+    mutationFn: (guildId: string) => api.leaveGuild(guildId),
+    onSuccess: (_result, guildId) => {
+      queryClient.setQueryData<Guild[]>(queryKeys.guilds, (old) =>
+        (old ?? []).filter((guild) => guild.id !== guildId),
+      );
+      queryClient.removeQueries({ queryKey: queryKeys.guildChannels(guildId) });
+      queryClient.removeQueries({
+        queryKey: queryKeys.guildPermissions(guildId),
+      });
+      queryClient.removeQueries({ queryKey: queryKeys.guildRoles(guildId) });
+      queryClient.removeQueries({ queryKey: ["guild-members", guildId] });
+      queryClient.removeQueries({
+        queryKey: queryKeys.guildSettings(guildId),
+      });
+      queryClient.removeQueries({ queryKey: ["guild-members-settings", guildId] });
+
+      if (route.mode === "guild" && route.guildId === guildId) {
+        navigate("/app/channels/@me");
+      }
+      setSettingsOpen(false);
+      toast.success("Left server.");
+    },
+    onError: (error) => {
+      toast.error(
+        error instanceof Error ? error.message : "Could not leave server.",
       );
     },
   });
@@ -573,6 +610,19 @@ export function ChatApp() {
       navigate("/app/channels/@me", { replace: true });
     }
   }, [location.pathname, navigate]);
+
+  useEffect(() => {
+    if (
+      route.mode !== "guild" ||
+      !route.guildId ||
+      guildsQuery.isPending ||
+      guilds.some((guild) => guild.id === route.guildId)
+    ) {
+      return;
+    }
+
+    navigate("/app/channels/@me", { replace: true });
+  }, [guilds, guildsQuery.isPending, navigate, route.guildId, route.mode]);
 
   useEffect(() => {
     if (!isGuildTextChannel && mobileMembersOpen) {
@@ -1052,8 +1102,21 @@ export function ChatApp() {
               channels={guildChannels}
               activeChannelId={route.channelId}
               canManageGuild={canManageGuild}
+              canLeaveGuild={canLeaveActiveGuild}
+              isLeavingGuild={leaveGuildMutation.isPending}
               canManageChannels={canManageChannels}
               onOpenSettings={() => setSettingsOpen(true)}
+              onLeaveGuild={() => {
+                const guildId = route.guildId;
+                if (!guildId || leaveGuildMutation.isPending) {
+                  return;
+                }
+                const guildName = activeGuild?.name ?? "this server";
+                if (!window.confirm(`Leave ${guildName}?`)) {
+                  return;
+                }
+                leaveGuildMutation.mutate(guildId);
+              }}
               onOpenChannel={(channelId) => {
                 if (!route.guildId) {
                   return;
