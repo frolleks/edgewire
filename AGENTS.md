@@ -31,6 +31,11 @@ This repository is a minimal Discord-like 1:1 DM clone with a Bun backend and Re
 
 ## Backend Notes
 - Better Auth is mounted at `/api/auth/*`.
+- REST routing uses Bun's built-in `routes` map (`apps/server/src/routes.ts`) mounted from `apps/server/src/index.ts`.
+- Route handlers are split by domain in `apps/server/src/controllers/*`.
+- Shared HTTP helpers for CORS/preflight/JSON/auth guards live in `apps/server/src/http/index.ts`.
+- Shared server runtime/business logic used by controllers + gateway lives in `apps/server/src/runtime.ts`.
+- `fetch(req, server)` in `apps/server/src/index.ts` is reserved for WebSocket upgrades (`/gateway`, `/api/gateway`) and non-route fallbacks.
 - Gateway endpoint is `/gateway` (also `/api/gateway`).
 - Gateway token is minted via `POST /api/gateway/token`.
 - Snowflake-like IDs are stored as `bigint` and serialized as strings in API payloads.

@@ -106,6 +106,13 @@ bun run smoke
 
 All routes require authentication except Better Auth endpoints.
 
+### Routing Structure
+- Bun routing is defined with `Bun.serve({ routes })` in `apps/server/src/index.ts`.
+- Route patterns and per-method handlers live in `apps/server/src/routes.ts`.
+- Domain route handlers/controllers live in `apps/server/src/controllers/`.
+- Shared HTTP response/CORS/auth helpers live in `apps/server/src/http/index.ts`.
+- WebSocket upgrades for `/gateway` and `/api/gateway` stay in the `fetch(req, server)` fallback in `apps/server/src/index.ts`.
+
 ### Auth
 - `GET/POST /api/auth/*` (Better Auth handler)
 
