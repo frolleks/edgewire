@@ -3,6 +3,7 @@
 Minimal Discord-like clone with:
 - `apps/web`: React + TypeScript + Tailwind + shadcn/ui + React Router + React Query
 - `apps/server`: Bun REST API + Bun WebSocket Gateway subset
+- `apps/mediasoup-server`: TypeScript mediasoup SFU + signaling over WebSocket
 - PostgreSQL + Drizzle ORM migrations
 - Better Auth (email/password + secure-cookie sessions)
 
@@ -23,7 +24,9 @@ Implemented scope:
 
 - `apps/web` - frontend
 - `apps/server` - backend API + gateway
+- `apps/mediasoup-server` - mediasoup signaling + SFU
 - `packages/types` - shared protocol/types
+- `apps/voice-server` - legacy voice server (not used in default flow)
 
 ## 1) Prerequisites
 
@@ -42,6 +45,7 @@ bun install
 ```bash
 cp apps/server/.env.example apps/server/.env
 cp apps/web/.env.example apps/web/.env
+cp apps/mediasoup-server/.env.example apps/mediasoup-server/.env
 ```
 
 For S3 uploads, configure the `S3_*`/`AWS_*` credentials plus upload limits in `apps/server/.env`.
@@ -102,6 +106,8 @@ Terminal 3:
 bun run dev:mediasoup
 ```
 
+`bun run dev:voice` starts the legacy voice server and is not part of the default mediasoup flow.
+
 Default URLs:
 - Web: `http://localhost:3000`
 - API/Gateway: `http://localhost:3001`
@@ -121,9 +127,83 @@ Set these in `apps/server/.env` (and share the secrets with `apps/mediasoup-serv
 [{"urls":["stun:stun.l.google.com:19302"]}]
 ```
 
-Also set `API_BASE_URL`, `VOICE_TOKEN_SECRET`, and `VOICE_INTERNAL_SECRET` in `apps/mediasoup-server/.env`.
-For NAT deployments, configure `MEDIASOUP_LISTEN_IP=0.0.0.0`, set `MEDIASOUP_ANNOUNCED_ADDRESS` to a public IP/hostname, and open `MEDIASOUP_MIN_PORT..MEDIASOUP_MAX_PORT` (UDP and TCP) in firewall/security groups.
-For local dev, use `MEDIASOUP_LISTEN_IP=127.0.0.1`.
+Set these in `apps/web/.env`:
+
+- `BUN_PUBLIC_USE_MEDIASOUP_VOICE=true`
+- `BUN_PUBLIC_DEBUG_VOICE=true|false` - verbose client voice logs
+
+Set these in `apps/mediasoup-server/.env`:
+
+- `API_BASE_URL` - Bun API base URL used for internal voice state sync
+- `VOICE_TOKEN_SECRET` - must match `apps/server/.env`
+- `VOICE_INTERNAL_SECRET` - must match `apps/server/.env`
+- `DEBUG_VOICE=true|false` - verbose mediasoup signaling logs
+- `MEDIASOUP_LISTEN_IP`
+- `MEDIASOUP_ANNOUNCED_ADDRESS`
+- `MEDIASOUP_MIN_PORT` / `MEDIASOUP_MAX_PORT`
+- `MEDIASOUP_INITIAL_AVAILABLE_OUTGOING_BITRATE` (default `1000000`)
+- `ICE_TRANSPORT_POLICY` (optional `all` or `relay`)
+
+Mediasoup-only networking (no TURN):
+
+- For local same-machine testing: `MEDIASOUP_LISTEN_IP=127.0.0.1`
+- For LAN/public clients: `MEDIASOUP_LISTEN_IP=0.0.0.0` and set `MEDIASOUP_ANNOUNCED_ADDRESS` to the reachable host/IP.
+- Open firewall/security groups for:
+  - signaling `4000/tcp`
+  - mediasoup RTP/ICE ports `MEDIASOUP_MIN_PORT..MEDIASOUP_MAX_PORT` (UDP and TCP)
+
+If `ICE failed` appears and mediasoup logs show candidates with `ip: 127.0.0.1`, `MEDIASOUP_ANNOUNCED_ADDRESS` is wrong/missing for your client network.
+
+### Voice Signaling Protocol (mediasoup)
+
+WebSocket envelope:
+
+- Request: `{ id, method, data? }`
+- Success response: `{ id, ok: true, data }`
+- Error response: `{ id, ok: false, error: { code, message } }`
+- Notification: `{ notification: true, method, data }`
+
+Methods:
+
+- `identify` - validates Bun-issued voice token and binds `{ userId, roomId }` to session
+- `join` - joins room, returns `routerRtpCapabilities`, existing peers, existing producers
+- `createWebRtcTransport`
+- `connectWebRtcTransport`
+- `produce`
+- `consume` - server creates consumer with `paused: true`
+- `resumeConsumer` - resumes consumer; video consumers request keyframe
+- `closeProducer`
+- `leave`
+- `updatePeerState`
+
+Notifications:
+
+- `peerJoined`
+- `peerLeft`
+- `newProducer`
+- `producerClosed`
+- `peerStateUpdated`
+
+Client lifecycle:
+
+1. `POST /api/voice/token`
+2. WS `identify`
+3. WS `join`
+4. `device.load({ routerRtpCapabilities })`
+5. Create recv transport, then send transport
+6. Produce mic/screen only if `device.canProduce(kind)`
+7. Consume flow: request `consume` with `device.recvRtpCapabilities`, create local consumer, attach track to media element, then call `resumeConsumer`
+
+Remote media behavior:
+
+- Remote audio is attached to `<audio autoplay playsinline>` and `play()` is invoked.
+- Remote screenshare is attached to `<video autoplay muted playsinline>` and `play()` is invoked.
+- If autoplay is blocked, UI shows one-click `Enable audio`.
+
+Debug logging (`DEBUG_VOICE`):
+
+- Server logs identify/join, transport create/connect, produce, consume (`canConsume`), resume, and producer close.
+- Client logs join/device load, transport connect/state changes, produce, consume, resume ack, and media `play()` success/failure.
 
 ## 7) Production Build
 
@@ -216,6 +296,11 @@ All routes require authentication except Better Auth endpoints.
 
 ### Gateway Auth Token
 - `POST /api/gateway/token`
+
+### Voice
+- `POST /api/voice/token`
+- `GET /api/guilds/:guildId/voice-state`
+- `POST /api/internal/voice/state` (internal, secret-protected)
 
 ## Gateway Subset
 
