@@ -11,7 +11,7 @@ import type {
   NotificationLevel,
   PartialGuild,
   UserSummary,
-} from "@discord/types";
+} from "@edgewire/types";
 import { apiFetch } from "./http";
 
 export type UserTheme = "system" | "light" | "dark";

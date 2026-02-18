@@ -1,4 +1,4 @@
-import { ChannelType, type BadgesPayload, type ChannelBadgePayload, type GuildBadgePayload } from "@discord/types";
+import { ChannelType, type BadgesPayload, type ChannelBadgePayload, type GuildBadgePayload } from "@edgewire/types";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../db";
 import { channelMembers, channelReads, channels, guildMembers, messages } from "../db/schema";

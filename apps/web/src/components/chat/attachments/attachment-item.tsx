@@ -1,4 +1,4 @@
-import type { MessagePayload } from "@discord/types";
+import type { MessagePayload } from "@edgewire/types";
 import { formatBytes, isImageAttachment } from "@/components/utils/format";
 
 type MessageAttachment = MessagePayload["attachments"][number];

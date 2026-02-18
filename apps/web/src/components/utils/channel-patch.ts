@@ -1,4 +1,4 @@
-import type { GuildChannelPayload } from "@discord/types";
+import type { GuildChannelPayload } from "@edgewire/types";
 import { byPositionThenId } from "@/components/utils/sort";
 
 export const applyChannelBulkPatch = (

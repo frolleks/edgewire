@@ -1,4 +1,4 @@
-import type { MessagePayload } from "@discord/types";
+import type { MessagePayload } from "@edgewire/types";
 import AttachmentItem from "./attachment-item";
 
 type MessageAttachment = MessagePayload["attachments"][number];

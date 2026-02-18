@@ -1,17 +1,17 @@
 services:
   postgres:
     image: postgres:17-alpine
-    container_name: discord_clone_postgres
+    container_name: edgewire_postgres
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: discord_clone_dm
+      POSTGRES_DB: edgewire_dm
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d discord_clone_dm"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d edgewire_dm"]
       interval: 5s
       timeout: 5s
       retries: 10

@@ -1,4 +1,4 @@
-import { ChannelType, type GuildChannelPayload } from "@discord/types";
+import { ChannelType, type GuildChannelPayload } from "@edgewire/types";
 import type { FormEvent } from "react";
 import { Modal } from "@/components/layout/modal";
 import { Button } from "@/components/ui/button";

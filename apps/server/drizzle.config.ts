@@ -5,7 +5,7 @@ export default {
   out: "./drizzle",
   dialect: "postgresql",
   dbCredentials: {
-    url: process.env.DATABASE_URL ?? "postgres://postgres:postgres@localhost:5432/discord_clone_dm",
+    url: process.env.DATABASE_URL ?? "postgres://postgres:postgres@localhost:5432/edgewire_dm",
   },
   strict: true,
   verbose: true,

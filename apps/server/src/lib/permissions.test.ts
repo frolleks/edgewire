@@ -41,7 +41,7 @@ describe("permissions compute", () => {
     expect(hasPerm(finalPerms, PermissionBits.SEND_MESSAGES)).toBe(true);
   });
 
-  it("applies overwrite order like Discord", () => {
+  it("applies overwrite order correctly", () => {
     const base = PermissionBits.VIEW_CHANNEL | PermissionBits.SEND_MESSAGES;
 
     const finalPerms = computeChannelPermissions({

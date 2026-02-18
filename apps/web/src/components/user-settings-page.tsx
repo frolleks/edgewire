@@ -1,4 +1,4 @@
-import type { MessagePayload, UserSummary } from "@discord/types";
+import type { MessagePayload, UserSummary } from "@edgewire/types";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { InfiniteData } from "@tanstack/react-query";
 import { type ChangeEvent, useEffect, useMemo, useState } from "react";

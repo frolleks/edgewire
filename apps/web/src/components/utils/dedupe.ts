@@ -1,4 +1,4 @@
-import type { MessagePayload } from "@discord/types";
+import type { MessagePayload } from "@edgewire/types";
 
 export const dedupeChronological = (
   messages: MessagePayload[],

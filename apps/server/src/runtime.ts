@@ -12,8 +12,8 @@ import type {
   PartialGuild,
   ReadyEvent,
   UserSummary as SharedUserSummary,
-} from "@discord/types";
-import { ChannelType } from "@discord/types";
+} from "@edgewire/types";
+import { ChannelType } from "@edgewire/types";
 import { and, asc, count, desc, eq, ilike, inArray, lt, ne, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { auth } from "./auth";

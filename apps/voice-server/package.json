@@ -1,5 +1,5 @@
 {
-  "name": "@discord/voice-server",
+  "name": "@edgewire/voice-server",
   "version": "0.0.1",
   "private": true,
   "type": "module",

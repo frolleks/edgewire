@@ -1,4 +1,4 @@
-import type { UserSummary } from "@discord/types";
+import type { UserSummary } from "@edgewire/types";
 import type { DmChannel } from "@/lib/api";
 import type { PresenceMap } from "@/lib/presence";
 import { presenceDotClassName } from "@/lib/presence";

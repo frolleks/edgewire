@@ -1,4 +1,4 @@
-import type { UserSummary } from "@discord/types";
+import type { UserSummary } from "@edgewire/types";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type VoiceActivityPeer = {

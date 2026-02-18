@@ -1,6 +1,7 @@
-# Discord Clone (DM + Guild Text Channels)
+# Edgewire
 
-Minimal Discord-like clone with:
+Stack:
+
 - `apps/web`: React + TypeScript + Tailwind + shadcn/ui + React Router + React Query
 - `apps/server`: Bun REST API + Bun WebSocket Gateway subset
 - `apps/mediasoup-server`: TypeScript mediasoup SFU + signaling over WebSocket
@@ -8,6 +9,7 @@ Minimal Discord-like clone with:
 - Better Auth (email/password + secure-cookie sessions)
 
 Implemented scope:
+
 - 1:1 DMs
 - Guilds (servers)
 - Guild categories + text channels
@@ -71,6 +73,7 @@ bun run db:migrate
 ```
 
 Latest migration also adds:
+
 - `user_profiles`
 - `user_settings`
 - `user_theme` enum
@@ -92,16 +95,19 @@ bun run dev
 Separate terminals:
 
 Terminal 1:
+
 ```bash
 bun run dev:server
 ```
 
 Terminal 2:
+
 ```bash
 bun run dev:web
 ```
 
 Terminal 3:
+
 ```bash
 bun run dev:mediasoup
 ```
@@ -109,6 +115,7 @@ bun run dev:mediasoup
 `bun run dev:voice` starts the legacy voice server and is not part of the default mediasoup flow.
 
 Default URLs:
+
 - Web: `http://localhost:3000`
 - API/Gateway: `http://localhost:3001`
 - Voice signaling WS: `ws://localhost:4000/ws`
@@ -124,7 +131,7 @@ Set these in `apps/server/.env` (and share the secrets with `apps/mediasoup-serv
 - `ICE_SERVERS_JSON` - JSON array of ICE servers, example:
 
 ```json
-[{"urls":["stun:stun.l.google.com:19302"]}]
+[{ "urls": ["stun:stun.l.google.com:19302"] }]
 ```
 
 Set these in `apps/web/.env`:
@@ -226,6 +233,7 @@ bun run smoke
 All routes require authentication except Better Auth endpoints.
 
 ### Routing Structure
+
 - Bun routing is defined with `Bun.serve({ routes })` in `apps/server/src/index.ts`.
 - Route patterns and per-method handlers live in `apps/server/src/routes.ts`.
 - Domain route handlers/controllers live in `apps/server/src/controllers/`.
@@ -233,9 +241,11 @@ All routes require authentication except Better Auth endpoints.
 - WebSocket upgrades for `/gateway` and `/api/gateway` stay in the `fetch(req, server)` fallback in `apps/server/src/index.ts`.
 
 ### Auth
+
 - `GET/POST /api/auth/*` (Better Auth handler)
 
 ### Users
+
 - `GET /api/users/@me`
 - `PATCH /api/users/@me`
 - `PUT /api/users/@me/profile`
@@ -244,10 +254,12 @@ All routes require authentication except Better Auth endpoints.
 - `GET /api/users?q=...`
 
 ### DM Channels
+
 - `GET /api/users/@me/channels`
 - `POST /api/users/@me/channels`
 
 ### Guilds
+
 - `POST /api/guilds`
 - `GET /api/users/@me/guilds`
 - `GET /api/guilds/:guildId`
@@ -259,6 +271,7 @@ All routes require authentication except Better Auth endpoints.
 - `GET /api/guilds/:guildId/permissions/@me`
 
 ### Roles
+
 - `GET /api/guilds/:guildId/roles`
 - `POST /api/guilds/:guildId/roles`
 - `PATCH /api/guilds/:guildId/roles` (bulk reorder)
@@ -268,36 +281,43 @@ All routes require authentication except Better Auth endpoints.
 - `DELETE /api/guilds/:guildId/members/:userId/roles/:roleId`
 
 ### Channels
+
 - `PATCH /api/channels/:channelId`
 - `DELETE /api/channels/:channelId`
 - `PUT /api/channels/:channelId/permissions/:overwriteId`
 - `DELETE /api/channels/:channelId/permissions/:overwriteId`
 
 ### Messages
+
 - `GET /api/channels/:channelId/messages?limit=50&before=:messageId`
 - `POST /api/channels/:channelId/messages` (`content` and optional `attachment_upload_ids`)
 - `PATCH /api/channels/:channelId/messages/:messageId`
 - `DELETE /api/channels/:channelId/messages/:messageId`
 
 ### Uploads (S3 direct upload)
+
 - `POST /api/uploads/avatar`
 - `POST /api/uploads/attachment`
 - `POST /api/uploads/:uploadId/complete`
 - `POST /api/uploads/:uploadId/abort`
 
 ### Typing + Read
+
 - `POST /api/channels/:channelId/typing`
 - `PUT /api/channels/:channelId/read`
 
 ### Invites
+
 - `POST /api/channels/:channelId/invites`
 - `GET /api/invites/:code?with_counts=true|false`
 - `POST /api/invites/:code/accept`
 
 ### Gateway Auth Token
+
 - `POST /api/gateway/token`
 
 ### Voice
+
 - `POST /api/voice/token`
 - `GET /api/guilds/:guildId/voice-state`
 - `POST /api/internal/voice/state` (internal, secret-protected)
@@ -305,9 +325,11 @@ All routes require authentication except Better Auth endpoints.
 ## Gateway Subset
 
 Endpoint:
+
 - `/gateway` (also accepts `/api/gateway`)
 
 Supported opcodes:
+
 - `10 HELLO`
 - `1 HEARTBEAT`
 - `11 HEARTBEAT_ACK`
@@ -317,6 +339,7 @@ Supported opcodes:
 - `0 DISPATCH`
 
 Dispatch events:
+
 - `READY`
 - `GUILD_CREATE`
 - `GUILD_UPDATE`
@@ -336,6 +359,7 @@ Dispatch events:
 - `USER_SETTINGS_UPDATE`
 
 READY behavior:
+
 - includes `private_channels` (DMs)
 - includes `guilds` as unavailable stubs
 - followed by per-guild `GUILD_CREATE` backfill
@@ -346,7 +370,7 @@ READY behavior:
   - `type=1` DM
   - `type=0` guild text
   - `type=4` guild category
-- `guild_roles` table stores Discord-like role fields; `@everyone` is created per guild with `id=guild_id`.
+- `guild_roles` table stores role fields; `@everyone` is created per guild with `id=guild_id`.
 - `guild_member_roles` stores many-to-many member role assignments (with implicit `@everyone`).
 - `channel_permission_overwrites` stores per-channel role/member overwrites (`allow`/`deny` as stringified bitfields).
 - Better Auth identity remains canonical in `auth_users` (`id`, `email`, `name`, `image`).
@@ -356,7 +380,7 @@ READY behavior:
 - Legacy `users` remains for existing foreign keys/joins and is kept in sync with profile identity fields.
 - Guild access is enforced via `guild_members`.
 - DM access is enforced via `channel_members`.
-- Permission math uses `BigInt` with Discord-like overwrite ordering.
+- Permission math uses `BigInt` with deterministic overwrite ordering.
 - IDs are snowflake-like values serialized as strings.
 - Better Auth Drizzle mapping keys are snake_case (`auth_users`, `auth_sessions`, `auth_accounts`, `auth_verifications`).
 

@@ -1,4 +1,4 @@
-import type { UserSummary } from "@discord/types";
+import type { UserSummary } from "@edgewire/types";
 import { useQuery } from "@tanstack/react-query";
 import type { ChangeEvent } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";

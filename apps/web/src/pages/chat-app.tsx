@@ -3,8 +3,8 @@ import type {
   GuildChannelPayload,
   MessagePayload,
   UserSummary,
-} from "@discord/types";
-import { ChannelType } from "@discord/types";
+} from "@edgewire/types";
+import { ChannelType } from "@edgewire/types";
 import {
   useInfiniteQuery,
   useMutation,

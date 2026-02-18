@@ -1,5 +1,5 @@
 {
-  "name": "@discord/mediasoup-server",
+  "name": "@edgewire/mediasoup-server",
   "version": "0.0.1",
   "private": true,
   "type": "module",

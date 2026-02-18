@@ -1,4 +1,4 @@
-import type { GuildChannelPayload } from "@discord/types";
+import type { GuildChannelPayload } from "@edgewire/types";
 import type { Role } from "@/lib/api";
 
 export const byPositionThenId = (

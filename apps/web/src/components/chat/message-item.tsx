@@ -3,7 +3,7 @@ import type {
   GuildRole,
   MessagePayload,
   UserSummary,
-} from "@discord/types";
+} from "@edgewire/types";
 import { Pencil, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";

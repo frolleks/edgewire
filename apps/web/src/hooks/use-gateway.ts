@@ -9,7 +9,7 @@ import type {
   MessagePayload,
   ReadyEvent,
   UserSummary,
-} from "@discord/types";
+} from "@edgewire/types";
 import { useQueryClient } from "@tanstack/react-query";
 import type { InfiniteData } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
@@ -460,8 +460,8 @@ export const useGateway = ({ enabled, userId, activeChannelId }: GatewayParams) 
               token,
               properties: {
                 os: navigator.platform,
-                browser: "discord-clone-web",
-                device: "discord-clone-web",
+                browser: "edgewire-web",
+                device: "edgewire-web",
               },
               intents: 0,
             },

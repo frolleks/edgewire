@@ -1,4 +1,4 @@
-import { ChannelType } from "@discord/types";
+import { ChannelType } from "@edgewire/types";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../db";
 import {

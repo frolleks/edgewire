@@ -1,4 +1,4 @@
-import type { GuildChannelPayload } from "@discord/types";
+import type { GuildChannelPayload } from "@edgewire/types";
 import { ChevronDown } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import GuildChannelTree from "@/components/guild-channel-tree";

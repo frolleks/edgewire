@@ -1,4 +1,4 @@
-import type { GatewayPacket } from "@discord/types";
+import type { GatewayPacket } from "@edgewire/types";
 import { apiNotFoundAfterAuth, internalServerError } from "./controllers/common";
 import { startUploadCleanupTask } from "./controllers/uploads";
 import { env } from "./env";

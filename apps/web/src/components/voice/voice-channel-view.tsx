@@ -1,6 +1,6 @@
 import { ArrowLeft, List } from "lucide-react";
 import { useEffect } from "react";
-import type { GuildChannelPayload, UserSummary } from "@discord/types";
+import type { GuildChannelPayload, UserSummary } from "@edgewire/types";
 import type { CurrentUser } from "@/lib/api";
 import type { useVoice } from "@/lib/voice/use-voice";
 import { Button } from "@/components/ui/button";

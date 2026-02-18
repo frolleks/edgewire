@@ -1,4 +1,4 @@
-import { ChannelType } from "@discord/types";
+import { ChannelType } from "@edgewire/types";
 import type { BunRequest } from "bun";
 import { and, eq, isNull, lt } from "drizzle-orm";
 import { z } from "zod";

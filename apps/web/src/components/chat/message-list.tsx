@@ -1,4 +1,4 @@
-import type { GuildChannelPayload, GuildRole, MessagePayload, UserSummary } from "@discord/types";
+import type { GuildChannelPayload, GuildRole, MessagePayload, UserSummary } from "@edgewire/types";
 import type { RefObject } from "react";
 import { Button } from "@/components/ui/button";
 import MessageItem from "./message-item";

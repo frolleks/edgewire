@@ -1,4 +1,4 @@
-import type { UserSummary } from "@discord/types";
+import type { UserSummary } from "@edgewire/types";
 
 export type SessionUser = {
   id: string;

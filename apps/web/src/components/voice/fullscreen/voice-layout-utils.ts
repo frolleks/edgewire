@@ -1,4 +1,4 @@
-import type { UserSummary } from "@discord/types";
+import type { UserSummary } from "@edgewire/types";
 import type { CurrentUser } from "@/lib/api";
 import type { VoiceJoinPhase, VoicePeer } from "@/lib/voice/types";
 

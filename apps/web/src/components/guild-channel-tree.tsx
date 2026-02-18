@@ -1,5 +1,5 @@
-import type { GuildChannelPayload } from "@discord/types";
-import { ChannelType } from "@discord/types";
+import type { GuildChannelPayload } from "@edgewire/types";
+import { ChannelType } from "@edgewire/types";
 import {
   DndContext,
   KeyboardSensor,

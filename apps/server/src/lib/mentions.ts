@@ -4,7 +4,7 @@ import {
   type MessageChannelMention,
   type NotificationLevel,
   type UserSummary as SharedUserSummary,
-} from "@discord/types";
+} from "@edgewire/types";
 import { and, eq, inArray } from "drizzle-orm";
 import { db } from "../db";
 import {

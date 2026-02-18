@@ -1,4 +1,4 @@
-import type { UserSummary } from "@discord/types";
+import type { UserSummary } from "@edgewire/types";
 import { MessageCircle } from "lucide-react";
 import { memo, type MouseEvent } from "react";
 import { getDisplayInitial } from "@/components/utils/format";

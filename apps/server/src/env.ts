@@ -58,7 +58,7 @@ const parseIceServers = (value: string | undefined): Array<{ urls: string | stri
 
 export const env = {
   PORT: Number(process.env.PORT ?? 3001),
-  DATABASE_URL: get("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/discord_clone_dm"),
+  DATABASE_URL: get("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/edgewire_dm"),
   BETTER_AUTH_SECRET: get("BETTER_AUTH_SECRET", "dev-only-secret-change-me"),
   APP_ORIGIN: get("APP_ORIGIN", "http://localhost:3000"),
   COOKIE_SECURE: toBool(process.env.COOKIE_SECURE ?? "false"),

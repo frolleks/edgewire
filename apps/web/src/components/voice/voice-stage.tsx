@@ -1,4 +1,4 @@
-import type { UserSummary } from "@discord/types";
+import type { UserSummary } from "@edgewire/types";
 import type { VoicePeer } from "@/lib/voice/types";
 import ScreenshareGrid from "./screenshare-grid";
 import VoiceMemberGrid from "./voice-member-grid";
