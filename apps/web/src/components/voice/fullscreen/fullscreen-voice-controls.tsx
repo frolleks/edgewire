@@ -106,7 +106,7 @@ export function FullscreenVoiceControls({
 
   return (
     <div className="w-[min(96vw,980px)] rounded-2xl border border-border/50 bg-background/70 px-3 py-2 shadow-xl backdrop-blur-md sm:px-4">
-      <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+      <div className="flex flex-wrap items-center gap-2 sm:gap-3 justify-center">
         <div
           className={cn(
             "inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-xs font-medium",
