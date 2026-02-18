@@ -107,6 +107,7 @@ export function VoiceChannelView({
         selfMute={voice.selfMute}
         selfDeaf={voice.selfDeaf}
         screenSharing={voice.screenSharing}
+        audioPlaybackBlocked={voice.audioPlaybackBlocked}
         status={voice.status}
         onToggleMute={voice.toggleMute}
         onToggleDeafen={voice.toggleDeafen}
@@ -114,6 +115,7 @@ export function VoiceChannelView({
         onDisconnect={voice.disconnect}
         onRetry={voice.retryJoin}
         onRetryMicrophone={() => void voice.retryMicrophone()}
+        onEnableAudioPlayback={() => void voice.enableAudioPlayback()}
       />
     </div>
   );

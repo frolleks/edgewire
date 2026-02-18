@@ -28,6 +28,7 @@ Implemented scope:
 ## 1) Prerequisites
 
 - Bun `>=1.3`
+- Node.js `>=22` (for `apps/mediasoup-server`)
 - Docker + Docker Compose
 
 ## 2) Install Dependencies
@@ -78,7 +79,7 @@ bun run db:studio
 
 ## 6) Run in Development
 
-Single command (server + web + voice signaling):
+Single command (server + web + mediasoup signaling):
 
 ```bash
 bun run dev
@@ -98,35 +99,38 @@ bun run dev:web
 
 Terminal 3:
 ```bash
-bun run dev:voice
+bun run dev:mediasoup
 ```
 
 Default URLs:
 - Web: `http://localhost:3000`
 - API/Gateway: `http://localhost:3001`
-- Voice signaling WS: `ws://localhost:3002/ws`
+- Voice signaling WS: `ws://localhost:4000/ws`
 
 ### Voice/Screenshare Environment
 
-Set these in `apps/server/.env` (and share the secret with `apps/voice-server/.env`):
+Set these in `apps/server/.env` (and share the secrets with `apps/mediasoup-server/.env`):
 
 - `VOICE_TOKEN_SECRET` - HMAC secret used by API and voice signaling server
-- `VOICE_INTERNAL_SECRET` - shared secret for voice-server -> API internal state sync
-- `VOICE_WS_URL` - signaling websocket URL returned by `/api/voice/token`
+- `VOICE_INTERNAL_SECRET` - shared secret for mediasoup-server -> API internal state sync
+- `MEDIASOUP_WS_URL` - signaling websocket URL returned by `/api/voice/token`
+  - Do not leave this as `localhost` if users connect from other devices/browsers on your LAN. Use your server host/IP.
 - `ICE_SERVERS_JSON` - JSON array of ICE servers, example:
 
 ```json
 [{"urls":["stun:stun.l.google.com:19302"]}]
 ```
 
-For production voice/screen reliability, configure TURN (for example coturn) in `ICE_SERVERS_JSON`.
-Also set `API_BASE_URL` and `VOICE_INTERNAL_SECRET` in `apps/voice-server/.env`.
+Also set `API_BASE_URL`, `VOICE_TOKEN_SECRET`, and `VOICE_INTERNAL_SECRET` in `apps/mediasoup-server/.env`.
+For NAT deployments, configure `MEDIASOUP_LISTEN_IP=0.0.0.0`, set `MEDIASOUP_ANNOUNCED_ADDRESS` to a public IP/hostname, and open `MEDIASOUP_MIN_PORT..MEDIASOUP_MAX_PORT` (UDP and TCP) in firewall/security groups.
+For local dev, use `MEDIASOUP_LISTEN_IP=127.0.0.1`.
 
 ## 7) Production Build
 
 ```bash
 bun run build
 bun run start:server
+bun run start:mediasoup
 ```
 
 ## 8) Smoke Script

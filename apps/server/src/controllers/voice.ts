@@ -24,6 +24,84 @@ const normalizeRoomId = (params: { kind: "guild" | "dm"; guildId?: string; chann
   return `guild:${params.guildId}:voice:${params.channelId}`;
 };
 
+const localHostnames = new Set(["localhost", "127.0.0.1", "::1"]);
+
+const splitHeaderValue = (value: string | null): string | null => {
+  if (!value) {
+    return null;
+  }
+
+  const first = value.split(",")[0]?.trim();
+  return first ? first : null;
+};
+
+const stripPort = (value: string): string => {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return "";
+  }
+
+  if (trimmed.startsWith("[")) {
+    const end = trimmed.indexOf("]");
+    return end > 1 ? trimmed.slice(1, end) : trimmed;
+  }
+
+  const firstColon = trimmed.indexOf(":");
+  const lastColon = trimmed.lastIndexOf(":");
+  if (firstColon >= 0 && firstColon === lastColon) {
+    return trimmed.slice(0, firstColon);
+  }
+
+  return trimmed;
+};
+
+const resolveMediasoupWsUrl = (request: Request): string => {
+  const fallback = env.MEDIASOUP_WS_URL;
+
+  let parsed: URL;
+  try {
+    parsed = new URL(fallback);
+  } catch {
+    return fallback;
+  }
+
+  if (!localHostnames.has(parsed.hostname)) {
+    return parsed.toString();
+  }
+
+  const forwardedHost = splitHeaderValue(request.headers.get("x-forwarded-host"));
+  const requestHost = splitHeaderValue(request.headers.get("host"));
+  const originHost = (() => {
+    const origin = request.headers.get("origin");
+    if (!origin) {
+      return null;
+    }
+
+    try {
+      return new URL(origin).hostname || null;
+    } catch {
+      return null;
+    }
+  })();
+
+  const host = stripPort(forwardedHost ?? requestHost ?? "");
+  const resolvedHost = host && !localHostnames.has(host) ? host : originHost;
+  if (!resolvedHost || localHostnames.has(resolvedHost)) {
+    return parsed.toString();
+  }
+
+  parsed.hostname = resolvedHost;
+
+  const forwardedProto = request.headers.get("x-forwarded-proto");
+  if (forwardedProto === "https") {
+    parsed.protocol = "wss:";
+  } else if (forwardedProto === "http") {
+    parsed.protocol = "ws:";
+  }
+
+  return parsed.toString();
+};
+
 export const createVoiceTokenEndpoint = async (request: BunRequest<"/api/voice/token">): Promise<Response> => {
   const authResult = await requireAuth(request);
   if (authResult instanceof Response) {
@@ -63,6 +141,7 @@ export const createVoiceTokenEndpoint = async (request: BunRequest<"/api/voice/t
 
     const token = createVoiceToken({
       sub: authResult.user.id,
+      roomId,
       room: {
         kind,
         guildId: channel.guildId,
@@ -77,9 +156,11 @@ export const createVoiceTokenEndpoint = async (request: BunRequest<"/api/voice/t
       },
     });
 
+    const mediasoupWsUrl = resolveMediasoupWsUrl(request);
     return json(request, {
       token,
-      voice_ws_url: env.VOICE_WS_URL,
+      mediasoup_ws_url: mediasoupWsUrl,
+      voice_ws_url: mediasoupWsUrl,
       room_id: roomId,
       ice_servers: env.ICE_SERVERS,
     });
@@ -95,6 +176,7 @@ export const createVoiceTokenEndpoint = async (request: BunRequest<"/api/voice/t
   const roomId = normalizeRoomId({ kind, channelId });
   const token = createVoiceToken({
     sub: authResult.user.id,
+    roomId,
     room: {
       kind,
       channelId,
@@ -108,9 +190,11 @@ export const createVoiceTokenEndpoint = async (request: BunRequest<"/api/voice/t
     },
   });
 
+  const mediasoupWsUrl = resolveMediasoupWsUrl(request);
   return json(request, {
     token,
-    voice_ws_url: env.VOICE_WS_URL,
+    mediasoup_ws_url: mediasoupWsUrl,
+    voice_ws_url: mediasoupWsUrl,
     room_id: roomId,
     ice_servers: env.ICE_SERVERS,
   });
@@ -151,7 +235,7 @@ export const syncGuildVoiceStateEndpoint = async (
     participants?: GuildVoiceParticipant[];
   }>(request);
 
-  if (!body.guild_id || !body.channel_id || !Array.isArray(body.participants)) {
+  if (!body || !body.guild_id || !body.channel_id || !Array.isArray(body.participants)) {
     return badRequest(request, "guild_id, channel_id, participants are required.");
   }
 

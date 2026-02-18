@@ -88,7 +88,8 @@ export type UploadInitResponse = {
 
 export type VoiceTokenResponse = {
   token: string;
-  voice_ws_url: string;
+  mediasoup_ws_url: string;
+  voice_ws_url?: string;
   room_id: string;
   ice_servers: RTCIceServer[];
 };

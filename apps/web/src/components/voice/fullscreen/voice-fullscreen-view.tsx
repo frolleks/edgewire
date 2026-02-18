@@ -424,6 +424,7 @@ export function VoiceFullscreenView({
               deafened: voice.selfDeaf,
               screensharing: voice.screenSharing,
             }}
+            audioPlaybackBlocked={voice.audioPlaybackBlocked}
             canScreenshare={canScreenshare}
             onToggleMute={voice.toggleMute}
             onToggleDeafen={voice.toggleDeafen}
@@ -434,6 +435,9 @@ export function VoiceFullscreenView({
               void voice.toggleScreenshare();
             }}
             onDisconnect={voice.disconnect}
+            onEnableAudioPlayback={() => {
+              void voice.enableAudioPlayback();
+            }}
             onToggleFilmstrip={() => setHideFilmstrip((value) => !value)}
             onOpenChannels={onOpenChannelsOverlay}
             onToggleBrowserFullscreen={onToggleBrowserFullscreen}

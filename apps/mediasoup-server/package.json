@@ -1,0 +1,26 @@
+{
+  "name": "@discord/mediasoup-server",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "prepare:worker": "node ./scripts/ensure-worker.mjs",
+    "dev": "node ./scripts/ensure-worker.mjs && tsx watch src/index.ts",
+    "build": "node ./scripts/ensure-worker.mjs && tsc -p tsconfig.json",
+    "start": "node ./scripts/ensure-worker.mjs && NODE_ENV=production node dist/index.js"
+  },
+  "dependencies": {
+    "dotenv": "^17.3.1",
+    "mediasoup": "^3.16.5",
+    "ws": "^8.18.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.5",
+    "@types/ws": "^8.5.14",
+    "tsx": "^4.19.3",
+    "typescript": "^5.9.2"
+  }
+}

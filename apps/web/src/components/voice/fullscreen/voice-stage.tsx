@@ -55,6 +55,9 @@ export function VoiceStage({
                     if (node && node.srcObject !== focusedScreenshare.stream) {
                       node.srcObject = focusedScreenshare.stream;
                     }
+                    if (node) {
+                      void node.play().catch(() => undefined);
+                    }
                   }}
                 />
               ) : (

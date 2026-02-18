@@ -24,6 +24,9 @@ export function ScreenshareTile({ id, label, stream, focused, onFocus }: Screens
           if (node && node.srcObject !== stream) {
             node.srcObject = stream;
           }
+          if (node) {
+            void node.play().catch(() => undefined);
+          }
         }}
       />
     </button>

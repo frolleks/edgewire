@@ -20,12 +20,14 @@ import type { VoiceConnectionStatus } from "@/lib/voice/types";
 type FullscreenVoiceControlsProps = {
   status: VoiceConnectionStatus;
   selfState: { muted: boolean; deafened: boolean; screensharing: boolean };
+  audioPlaybackBlocked: boolean;
   canScreenshare: boolean;
   onToggleMute: () => void;
   onToggleDeafen: () => void;
   onStartScreenshare: () => void;
   onStopScreenshare: () => void;
   onDisconnect: () => void;
+  onEnableAudioPlayback: () => void;
   onToggleFilmstrip?: () => void;
   onOpenChannels?: () => void;
   onToggleBrowserFullscreen?: () => void;
@@ -74,12 +76,14 @@ const connectionPillFromPhase = (
 export function FullscreenVoiceControls({
   status,
   selfState,
+  audioPlaybackBlocked,
   canScreenshare,
   onToggleMute,
   onToggleDeafen,
   onStartScreenshare,
   onStopScreenshare,
   onDisconnect,
+  onEnableAudioPlayback,
   onToggleFilmstrip,
   onOpenChannels,
   onToggleBrowserFullscreen,
@@ -289,6 +293,21 @@ export function FullscreenVoiceControls({
               Retry Mic
             </Button>
           ) : null}
+        </div>
+      ) : null}
+      {audioPlaybackBlocked ? (
+        <div className="mt-2 flex flex-wrap items-center gap-2 pl-1 text-xs text-amber-200">
+          <AlertTriangle className="size-3.5" />
+          <span>Audio playback is blocked by the browser.</span>
+          <Button
+            type="button"
+            variant="outline"
+            size="xs"
+            onClick={onEnableAudioPlayback}
+            aria-label="Enable voice audio playback"
+          >
+            Enable Audio
+          </Button>
         </div>
       ) : null}
     </div>

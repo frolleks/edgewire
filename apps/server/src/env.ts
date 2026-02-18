@@ -66,7 +66,7 @@ export const env = {
   GATEWAY_TOKEN_TTL_SECONDS: Number(process.env.GATEWAY_TOKEN_TTL_SECONDS ?? 300),
   VOICE_TOKEN_SECRET: get("VOICE_TOKEN_SECRET", "dev-voice-secret-change-me"),
   VOICE_INTERNAL_SECRET: get("VOICE_INTERNAL_SECRET", "dev-voice-internal-secret-change-me"),
-  VOICE_WS_URL: get("VOICE_WS_URL", "ws://localhost:3002/ws"),
+  MEDIASOUP_WS_URL: getEither("MEDIASOUP_WS_URL", "VOICE_WS_URL") ?? "ws://localhost:4000/ws",
   ICE_SERVERS: parseIceServers(getOptional("ICE_SERVERS_JSON")),
   S3_ACCESS_KEY_ID: getEither("S3_ACCESS_KEY_ID", "AWS_ACCESS_KEY_ID"),
   S3_SECRET_ACCESS_KEY: getEither("S3_SECRET_ACCESS_KEY", "AWS_SECRET_ACCESS_KEY"),

@@ -32,6 +32,9 @@ export function ScreenshareTile({
             if (node && node.srcObject !== tile.stream) {
               node.srcObject = tile.stream;
             }
+            if (node) {
+              void node.play().catch(() => undefined);
+            }
           }}
         />
       ) : (

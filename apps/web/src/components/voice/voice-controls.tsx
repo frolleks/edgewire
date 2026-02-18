@@ -8,6 +8,7 @@ type VoiceControlsProps = {
   selfMute: boolean;
   selfDeaf: boolean;
   screenSharing: boolean;
+  audioPlaybackBlocked: boolean;
   status: VoiceConnectionStatus;
   onToggleMute: () => void;
   onToggleDeafen: () => void;
@@ -15,6 +16,7 @@ type VoiceControlsProps = {
   onDisconnect: () => void;
   onRetry: () => void;
   onRetryMicrophone: () => void;
+  onEnableAudioPlayback: () => void;
 };
 
 export function VoiceControls({
@@ -22,6 +24,7 @@ export function VoiceControls({
   selfMute,
   selfDeaf,
   screenSharing,
+  audioPlaybackBlocked,
   status,
   onToggleMute,
   onToggleDeafen,
@@ -29,6 +32,7 @@ export function VoiceControls({
   onDisconnect,
   onRetry,
   onRetryMicrophone,
+  onEnableAudioPlayback,
 }: VoiceControlsProps) {
   return (
     <div className="shrink-0 border-t bg-card px-4 py-3">
@@ -63,6 +67,9 @@ export function VoiceControls({
           ) : null}
           {status.media.mic === "denied" ? (
             <Button variant="outline" size="sm" onClick={onRetryMicrophone}>Retry microphone</Button>
+          ) : null}
+          {audioPlaybackBlocked ? (
+            <Button variant="outline" size="sm" onClick={onEnableAudioPlayback}>Enable audio</Button>
           ) : null}
         </div>
       </div>

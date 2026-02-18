@@ -3,6 +3,7 @@ import { env } from "../env";
 
 type VoiceTokenPayload = {
   sub: string;
+  roomId?: string;
   room: {
     kind: "guild" | "dm";
     guildId?: string;
@@ -53,7 +54,9 @@ export const verifyVoiceToken = (token: string): VoiceTokenPayload | null => {
 
   try {
     const payload = JSON.parse(fromBase64Url(payloadPart)) as VoiceTokenPayload;
-    if (!payload.sub || !payload.room?.channelId || !payload.exp) {
+    const hasLegacyRoom = Boolean(payload.room?.channelId);
+    const hasRoomId = typeof payload.roomId === "string" && payload.roomId.length > 0;
+    if (!payload.sub || (!hasLegacyRoom && !hasRoomId) || !payload.exp) {
       return null;
     }
     if (payload.exp <= Math.floor(Date.now() / 1000)) {
